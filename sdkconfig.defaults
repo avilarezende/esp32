@@ -7,6 +7,11 @@ CONFIG_IDF_TARGET="esp32"
 # 4 MB flash matches the image size the bundled QEMU expects.
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 
+# Desktop and mobile browsers send large request headers (user-agent, accept,
+# security headers). The default 512-byte limit rejects them with
+# "Header fields are too long", so raise it for the configuration portal.
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
+
 # Enable the OpenCores Ethernet MAC driver. This peripheral only exists in the
 # ESP-IDF QEMU machine (`-nic user,model=open_eth`); it lets the Wi-Fi
 # configuration portal be reached from the host during emulation, since QEMU
