@@ -1,0 +1,8 @@
+# Default project configuration.
+# The chip family targeted by this firmware. QEMU emulation in ESP-IDF
+# supports the original ESP32, so the default target keeps `idf.py qemu`
+# working out of the box.
+CONFIG_IDF_TARGET="esp32"
+
+# 4 MB flash matches the image size the bundled QEMU expects.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y

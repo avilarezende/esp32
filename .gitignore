@@ -1,0 +1,9 @@
+# ESP-IDF build output
+/build/
+sdkconfig
+sdkconfig.old
+
+# Editor / OS
+.vscode/
+*.swp
+.DS_Store
