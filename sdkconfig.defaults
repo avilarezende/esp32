@@ -6,3 +6,10 @@ CONFIG_IDF_TARGET="esp32"
 
 # 4 MB flash matches the image size the bundled QEMU expects.
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# Enable the OpenCores Ethernet MAC driver. This peripheral only exists in the
+# ESP-IDF QEMU machine (`-nic user,model=open_eth`); it lets the Wi-Fi
+# configuration portal be reached from the host during emulation, since QEMU
+# does not emulate the Wi-Fi radio. Harmless on real hardware (the driver is
+# simply never started there).
+CONFIG_ETH_USE_OPENETH=y
