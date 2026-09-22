@@ -157,6 +157,7 @@ static const char APP_HTML[] =
 "<title>ESP32 Assistant</title><style>"
 "*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"
 "background:#0f172a;color:#e2e8f0}"
+"[hidden]{display:none!important}"
 ".overlay{position:fixed;inset:0;background:rgba(2,6,23,.85);display:flex;align-items:center;justify-content:center;padding:16px;z-index:9}"
 ".card{background:#1e293b;padding:22px 24px;border-radius:14px;width:360px;max-width:100%;box-shadow:0 10px 30px rgba(0,0,0,.4)}"
 "h1{font-size:1.15rem;margin:0 0 6px}p{color:#94a3b8;font-size:.85rem;margin:0 0 12px}"
