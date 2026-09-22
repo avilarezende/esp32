@@ -4,6 +4,9 @@
 sdkconfig
 sdkconfig.old
 
+# Host unit test build output
+/host_test/build/
+
 # Editor / OS
 .vscode/
 *.swp

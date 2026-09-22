@@ -24,47 +24,97 @@ static const char *TAG = "wifi_manager";
 #define NVS_KEY_SSID  "ssid"
 #define NVS_KEY_PASS  "pass"
 
-/* Number of association attempts before giving up and starting the portal. */
+/* Association attempts during the initial join before starting the portal. */
 #define WIFI_STA_MAX_RETRY 5
 
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
-static volatile bool s_connected;
-static volatile bool s_provisioning;
+static wifi_manager_state_t s_state = WIFI_MANAGER_STATE_PROVISIONING;
+static char s_ssid[WIFI_MANAGER_SSID_MAXLEN];
+static char s_ip[16];
+static char s_disconnect_reason[48];
 static httpd_handle_t s_http_server;
 
 #if CONFIG_APP_ENABLE_WIFI_RADIO
 static EventGroupHandle_t s_wifi_events;
 static int s_retry_num;
+static bool s_ever_connected;
+
+static const char *reason_to_str(int reason)
+{
+    switch (reason) {
+        case WIFI_REASON_AUTH_EXPIRE:      return "authentication expired";
+        case WIFI_REASON_AUTH_FAIL:        return "authentication failed";
+        case WIFI_REASON_NO_AP_FOUND:      return "network not found";
+        case WIFI_REASON_ASSOC_FAIL:       return "association failed";
+        case WIFI_REASON_HANDSHAKE_TIMEOUT:return "wrong password / handshake timeout";
+        case WIFI_REASON_BEACON_TIMEOUT:   return "beacon timeout (out of range)";
+        case WIFI_REASON_CONNECTION_FAIL:  return "connection failed";
+        default:                           return "disconnected";
+    }
+}
 
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
-    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
-    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        s_connected = false;
-        if (s_retry_num < WIFI_STA_MAX_RETRY) {
-            s_retry_num++;
-            ESP_LOGW(TAG, "station disconnected, retry %d/%d", s_retry_num, WIFI_STA_MAX_RETRY);
+    if (base != WIFI_EVENT) {
+        return;
+    }
+    switch (id) {
+        case WIFI_EVENT_STA_START:
             esp_wifi_connect();
-        } else if (s_wifi_events) {
-            xEventGroupSetBits(s_wifi_events, WIFI_FAIL_BIT);
+            break;
+        case WIFI_EVENT_STA_DISCONNECTED: {
+            wifi_event_sta_disconnected_t *ev = (wifi_event_sta_disconnected_t *)data;
+            snprintf(s_disconnect_reason, sizeof(s_disconnect_reason), "%s (%d)",
+                     reason_to_str(ev->reason), ev->reason);
+            if (s_ever_connected) {
+                /* Stay online: keep trying to reconnect indefinitely. */
+                s_state = WIFI_MANAGER_STATE_CONNECTING;
+                ESP_LOGW(TAG, "link lost (%s); reconnecting", s_disconnect_reason);
+                esp_wifi_connect();
+            } else if (s_retry_num < WIFI_STA_MAX_RETRY) {
+                s_retry_num++;
+                ESP_LOGW(TAG, "join retry %d/%d (%s)", s_retry_num, WIFI_STA_MAX_RETRY, s_disconnect_reason);
+                esp_wifi_connect();
+            } else if (s_wifi_events) {
+                xEventGroupSetBits(s_wifi_events, WIFI_FAIL_BIT);
+            }
+            break;
         }
-    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
-        ESP_LOGI(TAG, "station got IP: " IPSTR, IP2STR(&event->ip_info.ip));
-        s_retry_num = 0;
-        s_connected = true;
-        if (s_wifi_events) {
-            xEventGroupSetBits(s_wifi_events, WIFI_CONNECTED_BIT);
+        case WIFI_EVENT_AP_STACONNECTED: {
+            wifi_event_ap_staconnected_t *ev = (wifi_event_ap_staconnected_t *)data;
+            ESP_LOGI(TAG, "client " MACSTR " joined the config portal", MAC2STR(ev->mac));
+            break;
         }
-    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
-        wifi_event_ap_staconnected_t *event = (wifi_event_ap_staconnected_t *)data;
-        ESP_LOGI(TAG, "client " MACSTR " joined the config portal", MAC2STR(event->mac));
+        default:
+            break;
     }
 }
 #endif /* CONFIG_APP_ENABLE_WIFI_RADIO */
+
+static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    if (base != IP_EVENT) {
+        return;
+    }
+    if (id == IP_EVENT_STA_GOT_IP || id == IP_EVENT_ETH_GOT_IP) {
+        ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
+        esp_ip4addr_ntoa(&event->ip_info.ip, s_ip, sizeof(s_ip));
+        ESP_LOGI(TAG, "got IP: %s", s_ip);
+#if CONFIG_APP_ENABLE_WIFI_RADIO
+        if (id == IP_EVENT_STA_GOT_IP) {
+            s_retry_num = 0;
+            s_ever_connected = true;
+            s_state = WIFI_MANAGER_STATE_CONNECTED;
+            s_disconnect_reason[0] = '\0';
+            if (s_wifi_events) {
+                xEventGroupSetBits(s_wifi_events, WIFI_CONNECTED_BIT);
+            }
+        }
+#endif
+    }
+}
 
 esp_err_t wifi_manager_save_credentials(const char *ssid, const char *password)
 {
@@ -96,7 +146,7 @@ esp_err_t wifi_manager_load_credentials(char *ssid, size_t ssid_len,
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
     if (err != ESP_OK) {
-        return err; /* ESP_ERR_NVS_NOT_FOUND when the namespace is empty */
+        return err;
     }
     size_t len = ssid_len;
     err = nvs_get_str(handle, NVS_KEY_SSID, ssid, &len);
@@ -112,18 +162,61 @@ esp_err_t wifi_manager_load_credentials(char *ssid, size_t ssid_len,
     return err;
 }
 
-bool wifi_manager_is_connected(void)
+esp_err_t wifi_manager_forget(void)
 {
-    return s_connected;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    esp_err_t e1 = nvs_erase_key(handle, NVS_KEY_SSID);
+    esp_err_t e2 = nvs_erase_key(handle, NVS_KEY_PASS);
+    /* Missing keys are fine. */
+    if (e1 != ESP_OK && e1 != ESP_ERR_NVS_NOT_FOUND) err = e1;
+    if (e2 != ESP_OK && e2 != ESP_ERR_NVS_NOT_FOUND) err = e2;
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    if (err == ESP_OK) {
+        ESP_LOGW(TAG, "cleared stored Wi-Fi credentials");
+        s_ssid[0] = '\0';
+    }
+    return err;
 }
 
-bool wifi_manager_is_provisioning(void)
+void wifi_manager_mark_connected(const char *ssid)
 {
-    return s_provisioning;
+    if (ssid) {
+        strlcpy(s_ssid, ssid, sizeof(s_ssid));
+    }
+    s_state = WIFI_MANAGER_STATE_CONNECTED;
+}
+
+void wifi_manager_mark_provisioning(void)
+{
+    s_state = WIFI_MANAGER_STATE_PROVISIONING;
+}
+
+wifi_manager_state_t wifi_manager_get_state(void) { return s_state; }
+bool wifi_manager_is_connected(void) { return s_state == WIFI_MANAGER_STATE_CONNECTED; }
+bool wifi_manager_is_provisioning(void) { return s_state == WIFI_MANAGER_STATE_PROVISIONING; }
+const char *wifi_manager_get_ssid(void) { return s_ssid; }
+const char *wifi_manager_get_ip(void) { return s_ip; }
+const char *wifi_manager_last_disconnect_reason(void) { return s_disconnect_reason; }
+
+int wifi_manager_get_rssi(void)
+{
+#if CONFIG_APP_ENABLE_WIFI_RADIO
+    wifi_ap_record_t ap;
+    if (s_state == WIFI_MANAGER_STATE_CONNECTED && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+        return ap.rssi;
+    }
+#endif
+    return 0;
 }
 
 #if CONFIG_APP_ENABLE_WIFI_RADIO
-/* Configure the SoftAP used when no network is joined (real hardware). */
 static void start_softap(void)
 {
     wifi_config_t ap_config = {
@@ -139,16 +232,12 @@ static void start_softap(void)
     if (strlen(WIFI_MANAGER_AP_PASS) == 0) {
         ap_config.ap.authmode = WIFI_AUTH_OPEN;
     }
-
-    /* APSTA keeps the station interface available so the portal can scan for
-     * nearby networks while advertising its own AP. */
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     ESP_ERROR_CHECK(esp_wifi_start());
-    ESP_LOGI(TAG, "config AP up: SSID '%s' (password '%s')", WIFI_MANAGER_AP_SSID, WIFI_MANAGER_AP_PASS);
+    ESP_LOGI(TAG, "config AP up: SSID '%s'", WIFI_MANAGER_AP_SSID);
 }
 
-/* Try to join the network stored in NVS. Returns true on success. */
 static bool try_connect_sta(const char *ssid, const char *password)
 {
     ESP_LOGI(TAG, "connecting to stored network '%s'", ssid);
@@ -170,40 +259,75 @@ static bool try_connect_sta(const char *ssid, const char *password)
 }
 #endif /* CONFIG_APP_ENABLE_WIFI_RADIO */
 
-/* Start the configuration portal: SoftAP (on hardware) and/or the emulated
- * Ethernet interface (under QEMU), plus the HTTP configuration server. */
-static void start_provisioning(void)
+/* Append a JSON-escaped copy of `s` to buf (only " and \ need escaping here). */
+static void append_json_escaped(char *buf, size_t buf_len, const char *s)
 {
-    ESP_LOGI(TAG, "starting '%s' configuration portal", WIFI_MANAGER_AP_SSID);
-    s_provisioning = true;
+    size_t len = strlen(buf);
+    for (size_t i = 0; s[i] && len + 2 < buf_len; i++) {
+        if (s[i] == '"' || s[i] == '\\') {
+            buf[len++] = '\\';
+        }
+        buf[len++] = s[i];
+    }
+    buf[len] = '\0';
+}
+
+esp_err_t wifi_manager_scan_json(char *buf, size_t buf_len)
+{
+    if (buf == NULL || buf_len < 3) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    strlcpy(buf, "[", buf_len);
 
 #if CONFIG_APP_ENABLE_WIFI_RADIO
-    start_softap();
+    wifi_scan_config_t scan_cfg = { .show_hidden = false };
+    if (esp_wifi_scan_start(&scan_cfg, true) != ESP_OK) {
+        strlcat(buf, "]", buf_len);
+        return ESP_OK;
+    }
+    uint16_t max = 16;
+    wifi_ap_record_t recs[16];
+    if (esp_wifi_scan_get_ap_records(&max, recs) != ESP_OK) {
+        strlcat(buf, "]", buf_len);
+        return ESP_OK;
+    }
+    for (uint16_t i = 0; i < max; i++) {
+        char entry[80];
+        snprintf(entry, sizeof(entry), "%s{\"ssid\":\"", (i == 0) ? "" : ",");
+        strlcat(buf, entry, buf_len);
+        append_json_escaped(buf, buf_len, (char *)recs[i].ssid);
+        snprintf(entry, sizeof(entry), "\",\"rssi\":%d,\"auth\":%d}",
+                 recs[i].rssi, recs[i].authmode);
+        strlcat(buf, entry, buf_len);
+    }
+#else
+    /* No radio under QEMU: return placeholder networks so the dynamic list in
+     * the portal UI can be demonstrated end to end. */
+    const char *demo =
+        "{\"ssid\":\"Demo-Home (QEMU)\",\"rssi\":-45,\"auth\":3},"
+        "{\"ssid\":\"Demo-Office (QEMU)\",\"rssi\":-67,\"auth\":4},"
+        "{\"ssid\":\"Demo-Open (QEMU)\",\"rssi\":-72,\"auth\":0}";
+    strlcat(buf, demo, buf_len);
 #endif
 
-#if CONFIG_ETH_USE_OPENETH
-    /* Under QEMU there is no Wi-Fi radio, so also bring up the emulated
-     * Ethernet interface to make the portal reachable from the host. */
-    esp_err_t eth_err = qemu_eth_start();
-    if (eth_err != ESP_OK) {
-        ESP_LOGD(TAG, "emulated Ethernet not available (%s)", esp_err_to_name(eth_err));
-    }
-#endif
-
-    s_http_server = http_config_server_start();
-    if (s_http_server == NULL) {
-        ESP_LOGE(TAG, "failed to start configuration web server");
-    }
+    strlcat(buf, "]", buf_len);
+    return ESP_OK;
 }
 
 esp_err_t wifi_manager_start(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID,
+                                                        &on_ip_event, NULL, NULL));
 
     char ssid[WIFI_MANAGER_SSID_MAXLEN] = {0};
     char pass[WIFI_MANAGER_PASS_MAXLEN] = {0};
     esp_err_t cred_err = wifi_manager_load_credentials(ssid, sizeof(ssid), pass, sizeof(pass));
+    bool have_creds = (cred_err == ESP_OK && strlen(ssid) > 0);
+    if (have_creds) {
+        strlcpy(s_ssid, ssid, sizeof(s_ssid));
+    }
 
 #if CONFIG_APP_ENABLE_WIFI_RADIO
     s_wifi_events = xEventGroupCreate();
@@ -214,31 +338,40 @@ esp_err_t wifi_manager_start(void)
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                         &on_wifi_event, NULL, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                                        &on_wifi_event, NULL, NULL));
 
-    if (cred_err == ESP_OK && strlen(ssid) > 0) {
+    if (have_creds) {
+        s_state = WIFI_MANAGER_STATE_CONNECTING;
         if (try_connect_sta(ssid, pass)) {
             ESP_LOGI(TAG, "connected to '%s'", ssid);
-            return ESP_OK;
+        } else {
+            ESP_LOGW(TAG, "could not join '%s' (%s); starting portal", ssid, s_disconnect_reason);
+            esp_wifi_stop();
+            start_softap();
+            s_state = WIFI_MANAGER_STATE_PROVISIONING;
         }
-        ESP_LOGW(TAG, "could not join '%s' after %d retries", ssid, WIFI_STA_MAX_RETRY);
-        esp_wifi_stop(); /* reset radio before reconfiguring as SoftAP */
     } else {
-        ESP_LOGI(TAG, "no stored Wi-Fi credentials found");
+        ESP_LOGI(TAG, "no stored Wi-Fi credentials; starting portal");
+        start_softap();
+        s_state = WIFI_MANAGER_STATE_PROVISIONING;
     }
 #else
-    /* QEMU build: the Wi-Fi radio is disabled. Report stored credentials so the
-     * portal's persistence can be verified across reboots, then serve it over
-     * the emulated Ethernet interface. */
-    ESP_LOGW(TAG, "Wi-Fi radio disabled (QEMU build); serving portal over Ethernet");
-    if (cred_err == ESP_OK && strlen(ssid) > 0) {
-        ESP_LOGI(TAG, "found stored credentials for SSID '%s'", ssid);
+    /* QEMU build: no Wi-Fi radio. Serve the portal (and, when credentials are
+     * stored, a simulated "connected" status page) over the emulated Ethernet
+     * interface. */
+    ESP_LOGW(TAG, "Wi-Fi radio disabled (QEMU build); using emulated Ethernet");
+    qemu_eth_start();
+    if (have_creds) {
+        s_state = WIFI_MANAGER_STATE_CONNECTED;
+        ESP_LOGI(TAG, "found stored credentials for SSID '%s' (simulated connect in QEMU)", ssid);
     } else {
-        ESP_LOGI(TAG, "no stored Wi-Fi credentials found");
+        s_state = WIFI_MANAGER_STATE_PROVISIONING;
+        ESP_LOGI(TAG, "no stored Wi-Fi credentials; starting portal");
     }
 #endif
 
-    start_provisioning();
+    s_http_server = http_config_server_start();
+    if (s_http_server == NULL) {
+        ESP_LOGE(TAG, "failed to start web server");
+    }
     return ESP_OK;
 }

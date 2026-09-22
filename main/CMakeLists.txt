@@ -8,4 +8,5 @@ idf_component_register(SRCS "main.c"
                                 esp_netif
                                 esp_event
                                 nvs_flash
-                                esp_eth)
+                                esp_eth
+                                wifi_form)
