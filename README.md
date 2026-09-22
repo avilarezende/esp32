@@ -95,7 +95,27 @@ App endpoints: `GET /state`, `GET /bots`, `GET /devices`, `GET /hub/discover`,
 > a follow-up: replace the mock in `assistant.c` with an HTTPS proxy that reads
 > the credentials from NVS.
 
-## Build and flash (real hardware)
+## Cheap Yellow Display (ESP32-2432S028)
+
+The 2.8" yellow board (ILI9341 + XPT2046) draws the UI on its own panel:
+landscape 320×240, with the clock, temperature, humidity and the calico kitten.
+Touch wakes the screen. After 30 seconds idle it returns to the large clock.
+Until the station has an IP, the panel shows the setup portal instead:
+
+1. On the phone, join Wi-Fi `ESP32-Setup` / password `esp32setup`.
+2. Open `http://192.168.4.1` and save the home network.
+3. The board reboots, syncs the clock from NTP (Brasília, UTC−3) and shows the saver.
+
+```bash
+idf.py -B build_cyd -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
+idf.py -B build_cyd -p /dev/ttyUSB0 flash monitor
+```
+
+Use the serial port the board enumerates (`/dev/ttyUSB0` or `/dev/ttyACM0` on Linux,
+`/dev/cu.usbserial-*` or `/dev/cu.wchusbserial*` on macOS). This build targets the
+2.8" CYD. The 3.5" board uses a different controller and will not light this panel.
+
+## Build and flash (real hardware, no onboard display)
 
 ```bash
 idf.py build
@@ -157,8 +177,10 @@ natively with `gcc` + Unity — no hardware or emulator required:
 .
 ├── CMakeLists.txt          # top-level ESP-IDF project file
 ├── sdkconfig.defaults      # target (esp32), flash size, HTTP header limit, openeth
-├── sdkconfig.qemu          # QEMU overlay: disables the Wi-Fi radio
+├── sdkconfig.cyd           # 2.8" CYD overlay: onboard ILI9341 + touch
+├── sdkconfig.qemu          # QEMU overlay: disables the Wi-Fi radio and the panel
 ├── components/
+│   ├── esp_lcd_ili9341/    # vendored ILI9341 panel driver (Apache-2.0)
 │   └── wifi_form/          # pure, host-testable form parsing + validation
 ├── host_test/
 │   ├── run.sh              # build + run the wifi_form unit tests (gcc + Unity)
@@ -169,6 +191,8 @@ natively with `gcc` + Unity — no hardware or emulator required:
 │   ├── main.c              # app_main: chip info + wifi_manager bring-up
 │   ├── wifi_manager.[ch]   # STA-from-NVS, reconnection, SoftAP provisioning, NVS
 │   ├── app.html            # touch UI: chat, devices, settings, idle clock saver
+│   ├── cyd_scene.[ch]      # 320×240 panel drawing (clock, weather, kitten)
+│   ├── cyd_display.[ch]    # ILI9341 + XPT2046 bring-up for the 2.8" CYD
 │   ├── http_server.[ch]    # portal + assistant routes; embeds app.html
 │   ├── assistant.[ch]      # hub/bot config in NVS + mock chat/devices/weather
 │   └── qemu_eth.[ch]       # emulated OpenCores Ethernet bring-up (QEMU only)

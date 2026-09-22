@@ -9,3 +9,4 @@
 #   idf.py -B build_qemu -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.qemu" build
 #   idf.py -B build_qemu qemu
 CONFIG_APP_ENABLE_WIFI_RADIO=n
+CONFIG_APP_ENABLE_CYD=n
