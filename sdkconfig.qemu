@@ -1,0 +1,11 @@
+# Overlay applied on top of sdkconfig.defaults for the QEMU emulator build.
+#
+# The ESP-IDF QEMU machine does not emulate the Wi-Fi radio (starting it
+# panics), so disable the radio. With it off, the firmware serves the same
+# Wi-Fi configuration portal over the emulated OpenCores Ethernet interface,
+# letting the configuration UI be exercised end to end in emulation.
+#
+# Build/run with:
+#   idf.py -B build_qemu -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.qemu" build
+#   idf.py -B build_qemu qemu
+CONFIG_APP_ENABLE_WIFI_RADIO=n

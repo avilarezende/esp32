@@ -1,0 +1,29 @@
+menu "ESP32 Wi-Fi starter"
+
+    config APP_ENABLE_WIFI_RADIO
+        bool "Enable the Wi-Fi radio (STA join + SoftAP configuration portal)"
+        default y
+        help
+            Enable the real Wi-Fi radio. Keep this ON for physical hardware:
+            the device joins the stored network as a station and, when no
+            credentials are available, starts the "ESP32-Setup" SoftAP so the
+            user can configure it.
+
+            Turn this OFF for the ESP-IDF QEMU emulator, which does not emulate
+            the Wi-Fi radio (bringing it up panics). With the radio disabled the
+            firmware serves the exact same configuration web portal over the
+            emulated Ethernet interface, so the interface can be exercised end
+            to end in emulation. See sdkconfig.qemu.
+
+    config APP_BOT_BACKEND_MOCK
+        bool "Use a local mock backend for the assistant (chat/devices)"
+        default y
+        help
+            When enabled, the assistant chat and smart-device panels are served
+            by a built-in mock (canned replies and sample devices) so the whole
+            UI and flow can be exercised without external credentials. When
+            disabled, the firmware would instead proxy to the real bot/home-hub
+            APIs (requires credentials configured at runtime); that proxy is not
+            implemented yet, so keep this enabled for now.
+
+endmenu

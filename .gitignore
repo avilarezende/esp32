@@ -1,0 +1,13 @@
+# ESP-IDF build output
+/build/
+/build_qemu/
+sdkconfig
+sdkconfig.old
+
+# Host unit test build output
+/host_test/build/
+
+# Editor / OS
+.vscode/
+*.swp
+.DS_Store
