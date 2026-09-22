@@ -15,4 +15,15 @@ menu "ESP32 Wi-Fi starter"
             emulated Ethernet interface, so the interface can be exercised end
             to end in emulation. See sdkconfig.qemu.
 
+    config APP_BOT_BACKEND_MOCK
+        bool "Use a local mock backend for the assistant (chat/devices)"
+        default y
+        help
+            When enabled, the assistant chat and smart-device panels are served
+            by a built-in mock (canned replies and sample devices) so the whole
+            UI and flow can be exercised without external credentials. When
+            disabled, the firmware would instead proxy to the real bot/home-hub
+            APIs (requires credentials configured at runtime); that proxy is not
+            implemented yet, so keep this enabled for now.
+
 endmenu

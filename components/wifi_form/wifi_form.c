@@ -2,6 +2,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 static int hex_val(char c)
 {
@@ -91,4 +92,40 @@ bool wifi_form_valid_password(const char *password)
     }
     size_t len = strlen(password);
     return len == 0 || (len >= WIFI_FORM_PASS_MIN && len <= WIFI_FORM_PASS_MAX);
+}
+
+void wifi_form_json_escape(const char *src, char *dst, size_t dst_size)
+{
+    if (dst_size == 0) {
+        return;
+    }
+    size_t di = 0;
+    for (size_t si = 0; src && src[si] != '\0'; si++) {
+        unsigned char c = (unsigned char)src[si];
+        const char *esc = NULL;
+        char ubuf[7];
+        switch (c) {
+            case '"':  esc = "\\\""; break;
+            case '\\': esc = "\\\\"; break;
+            case '\n': esc = "\\n";  break;
+            case '\r': esc = "\\r";  break;
+            case '\t': esc = "\\t";  break;
+            default:
+                if (c < 0x20) {
+                    snprintf(ubuf, sizeof(ubuf), "\\u%04x", c);
+                    esc = ubuf;
+                }
+                break;
+        }
+        if (esc) {
+            size_t elen = strlen(esc);
+            if (di + elen >= dst_size) break;
+            memcpy(dst + di, esc, elen);
+            di += elen;
+        } else {
+            if (di + 1 >= dst_size) break;
+            dst[di++] = (char)c;
+        }
+    }
+    dst[di] = '\0';
 }

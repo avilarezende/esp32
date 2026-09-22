@@ -101,6 +101,24 @@ static void test_valid_password(void)
     TEST_ASSERT_FALSE(wifi_form_valid_password(NULL));
 }
 
+static void test_json_escape(void)
+{
+    char out[64];
+    wifi_form_json_escape("plain", out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("plain", out);
+
+    wifi_form_json_escape("a\"b\\c", out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("a\\\"b\\\\c", out);
+
+    wifi_form_json_escape("line1\nline2\t!", out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("line1\\nline2\\t!", out);
+
+    /* Control char below 0x20 becomes \u00XX. */
+    char in[2] = { 0x01, 0x00 };
+    wifi_form_json_escape(in, out, sizeof(out));
+    TEST_ASSERT_EQUAL_STRING("\\u0001", out);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -109,5 +127,6 @@ int main(void)
     RUN_TEST(test_get_field);
     RUN_TEST(test_valid_ssid);
     RUN_TEST(test_valid_password);
+    RUN_TEST(test_json_escape);
     return UNITY_END();
 }
