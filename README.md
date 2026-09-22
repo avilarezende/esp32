@@ -65,19 +65,29 @@ Once connected, `/` serves a single-page web app (see
 [`main/http_server.c`](main/http_server.c) and
 [`main/assistant.c`](main/assistant.c)):
 
-- An **animated avatar chat** to talk to the bot (Assistente tab).
-- A **smart-device panel** listing the devices the home hub/bot exposes
-  (Dispositivos tab).
-- **Settings** (Ajustes tab) with connection info, the principal-bot selector,
-  and "Forget network".
+The page ([`main/app.html`](main/app.html)) is laid out for a small touch panel
+(about 320×240, the same class of screen as a CYD): 48px targets, 16px type,
+a bottom tab bar, and a single column. It scales up on a phone.
+
+- **Chat** with an animated calico kitten. On a short screen the kitten sits
+  beside the thread so the keyboard row and tabs stay reachable.
+- **Casa** lists the devices the home hub/bot exposes, one large row each.
+- **Ajustes** shows connection info, the weather line, the principal-bot
+  selector, and a two-tap "Forget network" so a stray touch does not wipe Wi-Fi.
+- A **status strip** always shows the clock, temperature, and humidity.
+- After **30 seconds** without a tap or keypress, a full-screen saver takes
+  over with a large clock, the date, temperature, condition, humidity, and the
+  kitten asleep. Tap anywhere to return. `prefers-reduced-motion` turns the
+  kitten animations off.
 
 First-run **onboarding** asks whether to add a home hub (HomeKit / Home
 Assistant / MQTT), offers a mock discovery, and stores address/user/password in
-NVS. If the account has more than one bot, it prompts to choose the **principal
-bot** shown with the avatar.
+NVS. The primary action stays pinned to the bottom of the sheet. If the account
+has more than one bot, it prompts to choose the **principal bot** shown with
+the kitten.
 
 App endpoints: `GET /state`, `GET /bots`, `GET /devices`, `GET /hub/discover`,
-`POST /chat`, `POST /hub`, `POST /bot`.
+`GET /weather`, `POST /chat`, `POST /hub`, `POST /bot`.
 
 > The chat replies and device list come from a **local mock backend**
 > (`CONFIG_APP_BOT_BACKEND_MOCK`, default on) so the whole flow works without
@@ -158,8 +168,9 @@ natively with `gcc` + Unity — no hardware or emulator required:
 │   ├── Kconfig.projbuild   # APP_ENABLE_WIFI_RADIO option
 │   ├── main.c              # app_main: chip info + wifi_manager bring-up
 │   ├── wifi_manager.[ch]   # STA-from-NVS, reconnection, SoftAP provisioning, NVS
-│   ├── http_server.[ch]    # portal + assistant app; /scan,/connect,/forget,/chat,/hub,/bot,...
-│   ├── assistant.[ch]      # hub/bot config in NVS + mock chat/devices/bots backend
+│   ├── app.html            # touch UI: chat, devices, settings, idle clock saver
+│   ├── http_server.[ch]    # portal + assistant routes; embeds app.html
+│   ├── assistant.[ch]      # hub/bot config in NVS + mock chat/devices/weather
 │   └── qemu_eth.[ch]       # emulated OpenCores Ethernet bring-up (QEMU only)
 └── .cursor/
     ├── environment.json    # Cloud Agent environment definition

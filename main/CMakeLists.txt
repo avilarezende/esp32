@@ -4,6 +4,7 @@ idf_component_register(SRCS "main.c"
                             "qemu_eth.c"
                             "assistant.c"
                        INCLUDE_DIRS "."
+                       EMBED_TXTFILES "app.html"
                        REQUIRES esp_wifi
                                 esp_http_server
                                 esp_netif

@@ -140,6 +140,16 @@ void assistant_discover_json(char *buf, size_t buf_len)
         "]", buf_len);
 }
 
+void assistant_weather_json(char *buf, size_t buf_len)
+{
+    /* Local mock so the glanceable clock can show temperature and humidity
+     * without an external weather provider. */
+    strlcpy(buf,
+        "{\"place\":\"Casa\",\"tempC\":26,\"humidity\":62,"
+        "\"condition\":\"parcialmente nublado\",\"code\":\"partly\"}",
+        buf_len);
+}
+
 void assistant_state_json(char *buf, size_t buf_len)
 {
     char ssid_esc[96];

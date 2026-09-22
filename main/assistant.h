@@ -35,6 +35,7 @@ void assistant_state_json(char *buf, size_t buf_len);
 void assistant_bots_json(char *buf, size_t buf_len);
 void assistant_devices_json(char *buf, size_t buf_len);
 void assistant_discover_json(char *buf, size_t buf_len);
+void assistant_weather_json(char *buf, size_t buf_len);
 
 /* Produce a reply for a chat message into `out` (JSON-safe plain text). */
 void assistant_chat_reply(const char *message, char *out, size_t out_len);
