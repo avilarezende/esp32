@@ -78,41 +78,10 @@ static void schedule_restart(void)
 
 /* ---- pages ---- */
 
-static void send_status_page(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "text/html");
-    httpd_resp_sendstr_chunk(req, PAGE_HEAD);
-    httpd_resp_sendstr_chunk(req, "<h1>Connected</h1><p>This ESP32 is configured.</p>");
-
-    char row[160];
-    const char *ssid = wifi_manager_get_ssid();
-    const char *ip = wifi_manager_get_ip();
-    int rssi = wifi_manager_get_rssi();
-
-    snprintf(row, sizeof(row), "<div class=\"row\"><span class=\"muted\">Network</span><span>%s</span></div>",
-             (ssid && ssid[0]) ? ssid : "&mdash;");
-    httpd_resp_sendstr_chunk(req, row);
-    snprintf(row, sizeof(row), "<div class=\"row\"><span class=\"muted\">IP address</span><span>%s</span></div>",
-             (ip && ip[0]) ? ip : "&mdash;");
-    httpd_resp_sendstr_chunk(req, row);
-    if (rssi != 0) {
-        snprintf(row, sizeof(row), "<div class=\"row\"><span class=\"muted\">Signal</span><span>%d dBm</span></div>", rssi);
-        httpd_resp_sendstr_chunk(req, row);
-    }
-    if (wifi_manager_get_state() == WIFI_MANAGER_STATE_CONNECTING) {
-        httpd_resp_sendstr_chunk(req, "<p class=\"warn\">Reconnecting&hellip;</p>");
-    }
-
-    httpd_resp_sendstr_chunk(req,
-        "<form method=\"POST\" action=\"/forget\">"
-        "<button class=\"alt\" type=\"submit\">Forget network</button></form>");
-    httpd_resp_sendstr_chunk(req, PAGE_TAIL);
-    httpd_resp_sendstr_chunk(req, NULL);
-}
-
 static void send_config_page(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_sendstr_chunk(req, PAGE_HEAD);
     httpd_resp_sendstr_chunk(req,
         "<h1>Wi-Fi Setup</h1><p>Choose a network for your ESP32 to join.</p>"
@@ -276,6 +245,7 @@ static const char APP_HTML[] =
 static void send_app_page(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_sendstr(req, APP_HTML);
 }
 
