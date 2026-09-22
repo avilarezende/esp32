@@ -14,6 +14,7 @@ Comandos essenciais (após `. "$HOME/esp/esp-idf/export.sh"`):
 - Build QEMU (rádio desligado, portal via Ethernet emulada):
   `idf.py -B build_qemu -DSDKCONFIG=build_qemu/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.qemu" build`
 - Emular: `idf.py -B build_qemu qemu` (portal em `openeth`; use `hostfwd=tcp::8080-:80` para acessar via `http://127.0.0.1:8080/`).
+- Testes unitários (host, sem hardware): `./host_test/run.sh` (gcc + Unity sobre o componente `wifi_form`).
 
 ## Roteamento de modelos (Cursor + OpenCode Go)
 

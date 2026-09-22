@@ -36,7 +36,8 @@ already have `idf.py` available.
 ## Wi-Fi configuration flow
 
 1. On boot the device reads the SSID/password from NVS.
-2. If present, it joins that network as a station (retrying a few times).
+2. If present, it joins that network as a station (retrying a few times) and then
+   keeps the link up, auto-reconnecting on drops.
 3. If absent, or the join fails, it starts the `ESP32-Setup` SoftAP and serves a
    configuration page.
 4. Connect a phone/laptop to `ESP32-Setup` (password `esp32setup`), open the
@@ -44,6 +45,19 @@ already have `idf.py` available.
 5. The credentials are stored in NVS and the device reboots to connect.
 
 The AP SSID/password are defined in [`main/wifi_manager.h`](main/wifi_manager.h).
+
+### Web endpoints
+
+The configuration server ([`main/http_server.c`](main/http_server.c)) serves:
+
+- `GET /` — the configuration form when not connected, or a **status page**
+  (SSID, IP, signal) with a **Forget network** button when connected.
+- `GET /scan` — JSON list of nearby networks `[{"ssid","rssi","auth"}, ...]`;
+  the config page fetches this to populate the network list (with a Rescan
+  action). Under QEMU (no radio) it returns labeled placeholder entries.
+- `POST /connect` — validates the SSID (1–32 chars) and password (empty or
+  8–63 chars), stores them in NVS, and reboots to apply.
+- `POST /forget` — clears the stored credentials and returns to provisioning.
 
 ## Build and flash (real hardware)
 
@@ -87,8 +101,19 @@ curl -X POST --data 'ssid=MyHomeWiFi&password=secret' \
      http://127.0.0.1:8080/connect                # submit credentials
 ```
 
-The submitted credentials are persisted to NVS; power-cycle the emulator to see
+The submitted credentials are persisted to NVS. In the QEMU build the portal
+then shows the simulated connected status page; power-cycle the emulator to see
 the device report `found stored credentials for SSID '...'` on the next boot.
+
+## Tests
+
+Pure form-handling logic (URL decoding, field parsing, SSID/password validation)
+lives in the `wifi_form` component and is covered by host unit tests that run
+natively with `gcc` + Unity — no hardware or emulator required:
+
+```bash
+./host_test/run.sh
+```
 
 ## Project layout
 
@@ -97,12 +122,17 @@ the device report `found stored credentials for SSID '...'` on the next boot.
 ├── CMakeLists.txt          # top-level ESP-IDF project file
 ├── sdkconfig.defaults      # target (esp32), flash size, HTTP header limit, openeth
 ├── sdkconfig.qemu          # QEMU overlay: disables the Wi-Fi radio
+├── components/
+│   └── wifi_form/          # pure, host-testable form parsing + validation
+├── host_test/
+│   ├── run.sh              # build + run the wifi_form unit tests (gcc + Unity)
+│   └── test_wifi_form.c    # Unity test cases
 ├── main/
 │   ├── CMakeLists.txt      # component registration + dependencies
 │   ├── Kconfig.projbuild   # APP_ENABLE_WIFI_RADIO option
 │   ├── main.c              # app_main: chip info + wifi_manager bring-up
-│   ├── wifi_manager.[ch]   # STA-from-NVS, SoftAP provisioning, credential storage
-│   ├── http_server.[ch]    # configuration web portal (GET / and POST /connect)
+│   ├── wifi_manager.[ch]   # STA-from-NVS, reconnection, SoftAP provisioning, NVS
+│   ├── http_server.[ch]    # portal: config + status pages, /scan, /connect, /forget
 │   └── qemu_eth.[ch]       # emulated OpenCores Ethernet bring-up (QEMU only)
 └── .cursor/
     ├── environment.json    # Cloud Agent environment definition
