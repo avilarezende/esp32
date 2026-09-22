@@ -59,6 +59,32 @@ The configuration server ([`main/http_server.c`](main/http_server.c)) serves:
   8–63 chars), stores them in NVS, and reboots to apply.
 - `POST /forget` — clears the stored credentials and returns to provisioning.
 
+## Assistant app
+
+Once connected, `/` serves a single-page web app (see
+[`main/http_server.c`](main/http_server.c) and
+[`main/assistant.c`](main/assistant.c)):
+
+- An **animated avatar chat** to talk to the bot (Assistente tab).
+- A **smart-device panel** listing the devices the home hub/bot exposes
+  (Dispositivos tab).
+- **Settings** (Ajustes tab) with connection info, the principal-bot selector,
+  and "Forget network".
+
+First-run **onboarding** asks whether to add a home hub (HomeKit / Home
+Assistant / MQTT), offers a mock discovery, and stores address/user/password in
+NVS. If the account has more than one bot, it prompts to choose the **principal
+bot** shown with the avatar.
+
+App endpoints: `GET /state`, `GET /bots`, `GET /devices`, `GET /hub/discover`,
+`POST /chat`, `POST /hub`, `POST /bot`.
+
+> The chat replies and device list come from a **local mock backend**
+> (`CONFIG_APP_BOT_BACKEND_MOCK`, default on) so the whole flow works without
+> external credentials. Wiring the real bot (e.g. xAI Grok) and home-hub APIs is
+> a follow-up: replace the mock in `assistant.c` with an HTTPS proxy that reads
+> the credentials from NVS.
+
 ## Build and flash (real hardware)
 
 ```bash
@@ -132,7 +158,8 @@ natively with `gcc` + Unity — no hardware or emulator required:
 │   ├── Kconfig.projbuild   # APP_ENABLE_WIFI_RADIO option
 │   ├── main.c              # app_main: chip info + wifi_manager bring-up
 │   ├── wifi_manager.[ch]   # STA-from-NVS, reconnection, SoftAP provisioning, NVS
-│   ├── http_server.[ch]    # portal: config + status pages, /scan, /connect, /forget
+│   ├── http_server.[ch]    # portal + assistant app; /scan,/connect,/forget,/chat,/hub,/bot,...
+│   ├── assistant.[ch]      # hub/bot config in NVS + mock chat/devices/bots backend
 │   └── qemu_eth.[ch]       # emulated OpenCores Ethernet bring-up (QEMU only)
 └── .cursor/
     ├── environment.json    # Cloud Agent environment definition
