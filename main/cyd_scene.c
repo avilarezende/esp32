@@ -9,10 +9,6 @@ static uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
     return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
-static const uint8_t SEG[10] = {
-    0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F
-};
-
 typedef struct {
     uint16_t *band;
     int y0;
@@ -264,78 +260,170 @@ static void text_center(canvas_t *c, int y, int scale, const char *s, uint16_t c
     text(c, (CYD_W - text_px(s, scale)) / 2, y, scale, s, color);
 }
 
-static void seg_h(canvas_t *c, int x, int y, int w, int t, uint16_t color)
+/* Geometric sans for the clock, in a 24x40 box. Round counters, not segments. */
+static int cu(int v, int h)
 {
-    fill_rect(c, x + t / 2, y, w - t, t, color);
+    return v * h / 40;
 }
 
-static void seg_v(canvas_t *c, int x, int y, int h, int t, uint16_t color)
+static int cstroke(int h)
 {
-    fill_rect(c, x, y + t / 2, t, h - t, color);
+    int r = (h + 8) / 12;
+    return r < 1 ? 1 : r;
 }
 
-static void digit(canvas_t *c, int x, int y, int w, int h, int t, int mask, uint16_t color)
+static void stamp(canvas_t *c, int x0, int y0, int x1, int y1, int r, uint16_t color)
 {
-    int half = h / 2;
-    if (mask & 0x01) {
-        seg_h(c, x, y, w, t, color);
+    int dx = x1 - x0;
+    int dy = y1 - y0;
+    int adx = dx < 0 ? -dx : dx;
+    int ady = dy < 0 ? -dy : dy;
+    int n = adx > ady ? adx : ady;
+    if (n < 1) {
+        n = 1;
     }
-    if (mask & 0x02) {
-        seg_v(c, x + w - t, y, half, t, color);
+    if (n > 28) {
+        n = 28;
     }
-    if (mask & 0x04) {
-        seg_v(c, x + w - t, y + half, half, t, color);
-    }
-    if (mask & 0x08) {
-        seg_h(c, x, y + h - t, w, t, color);
-    }
-    if (mask & 0x10) {
-        seg_v(c, x, y + half, half, t, color);
-    }
-    if (mask & 0x20) {
-        seg_v(c, x, y, half, t, color);
-    }
-    if (mask & 0x40) {
-        seg_h(c, x, y + half - t / 2, w, t, color);
+    for (int i = 0; i <= n; i++) {
+        fill_disc(c, x0 + dx * i / n, y0 + dy * i / n, r, color);
     }
 }
 
-static int clock_char(canvas_t *c, int x, int y, int w, int h, int t, char ch, uint16_t color)
+static void dline(canvas_t *c, int ox, int oy, int h, int x0, int y0, int x1, int y1, uint16_t color)
 {
-    if (ch >= '0' && ch <= '9') {
-        digit(c, x, y, w, h, t, SEG[ch - '0'], color);
-        return w;
+    stamp(c, ox + cu(x0, h), oy + cu(y0, h), ox + cu(x1, h), oy + cu(y1, h), cstroke(h), color);
+}
+
+static void cubic(int x0, int y0, int x1, int y1, int x2, int y2, int x3, int y3,
+                  int i, int steps, int *xo, int *yo);
+
+static void dcurve(canvas_t *c, int ox, int oy, int h,
+                   int x0, int y0, int x1, int y1, int x2, int y2, int x3, int y3,
+                   uint16_t color)
+{
+    int r = cstroke(h);
+    for (int i = 0; i <= 8; i++) {
+        int x;
+        int y;
+        cubic(x0, y0, x1, y1, x2, y2, x3, y3, i, 8, &x, &y);
+        fill_disc(c, ox + cu(x, h), oy + cu(y, h), r, color);
+    }
+}
+
+static void dring(canvas_t *c, int ox, int oy, int h, int cx, int cy, int rx, int ry, uint16_t color)
+{
+    int t = cstroke(h);
+    int px = ox + cu(cx, h);
+    int py = oy + cu(cy, h);
+    int orx = cu(rx, h);
+    int ory = cu(ry, h);
+    if (orx < t + 1) {
+        orx = t + 1;
+    }
+    if (ory < t + 1) {
+        ory = t + 1;
+    }
+    fill_ellipse(c, px, py, orx, ory, color);
+    fill_ellipse(c, px, py, orx - t, ory - t, c->bg);
+}
+
+static int clock_char(canvas_t *c, int x, int y, int h, char ch, uint16_t color)
+{
+    int adv = cu(26, h);
+    if (ch == ':') {
+        int r = cstroke(h);
+        if (r < 2 && h >= 16) {
+            r = 2;
+        }
+        fill_disc(c, x + cu(4, h), y + cu(14, h), r, color);
+        fill_disc(c, x + cu(4, h), y + cu(27, h), r, color);
+        return cu(10, h);
     }
     if (ch == '-') {
-        digit(c, x, y, w, h, t, 0x40, color);
-        return w;
+        dline(c, x, y, h, 4, 20, 20, 20, color);
+        return adv;
     }
-    if (ch == ':') {
-        int s = t;
-        if (s < 4) {
-            s = 4;
-        }
-        fill_rect(c, x + 2, y + h / 3 - s / 2, s, s, color);
-        fill_rect(c, x + 2, y + (2 * h) / 3 - s / 2, s, s, color);
-        return s + 6;
+    if (ch < '0' || ch > '9') {
+        return adv;
     }
-    return w;
+    switch (ch) {
+    case '0':
+        dring(c, x, y, h, 12, 20, 10, 17, color);
+        break;
+    case '1':
+        dline(c, x, y, h, 8, 11, 13, 5, color);
+        dline(c, x, y, h, 13, 5, 13, 35, color);
+        dline(c, x, y, h, 7, 35, 19, 35, color);
+        break;
+    case '2':
+        dcurve(c, x, y, h, 5, 14, 4, 3, 21, 3, 19, 16, color);
+        dline(c, x, y, h, 19, 16, 5, 33, color);
+        dline(c, x, y, h, 5, 33, 20, 33, color);
+        break;
+    case '3':
+        dcurve(c, x, y, h, 5, 12, 5, 3, 21, 3, 16, 15, color);
+        dcurve(c, x, y, h, 16, 15, 22, 18, 22, 37, 6, 33, color);
+        break;
+    case '4':
+        dline(c, x, y, h, 16, 5, 16, 35, color);
+        dline(c, x, y, h, 16, 6, 5, 24, color);
+        dline(c, x, y, h, 4, 24, 21, 24, color);
+        break;
+    case '5':
+        dline(c, x, y, h, 18, 6, 6, 6, color);
+        dline(c, x, y, h, 6, 6, 7, 17, color);
+        dcurve(c, x, y, h, 7, 17, 6, 15, 21, 16, 18, 27, color);
+        dcurve(c, x, y, h, 18, 27, 16, 36, 6, 36, 6, 30, color);
+        break;
+    case '6':
+        dcurve(c, x, y, h, 16, 8, 6, 4, 5, 16, 8, 22, color);
+        dring(c, x, y, h, 12, 26, 9, 11, color);
+        break;
+    case '7':
+        dline(c, x, y, h, 5, 7, 19, 7, color);
+        dline(c, x, y, h, 19, 7, 8, 35, color);
+        break;
+    case '8':
+        dring(c, x, y, h, 12, 13, 8, 9, color);
+        dring(c, x, y, h, 12, 28, 9, 10, color);
+        break;
+    default: /* 9 */
+        dring(c, x, y, h, 12, 15, 9, 11, color);
+        dcurve(c, x, y, h, 16, 20, 20, 26, 18, 38, 8, 34, color);
+        break;
+    }
+    return adv;
 }
 
-static void clock_row(canvas_t *c, int y, int w, int h, int t, int gap, const char *hhmm, uint16_t color)
+static int clock_width(int h, const char *hhmm)
 {
+    int gap = cu(3, h);
     int total = 0;
     for (int i = 0; hhmm[i]; i++) {
-        total += (hhmm[i] == ':') ? (t < 4 ? 10 : t + 6) : w;
+        total += (hhmm[i] == ':') ? cu(10, h) : cu(26, h);
         if (hhmm[i + 1]) {
             total += gap;
         }
     }
-    int x = (CYD_W - total) / 2;
+    return total;
+}
+
+static void clock_at(canvas_t *c, int x, int y, int h, const char *hhmm, uint16_t color)
+{
+    int gap = cu(3, h);
     for (int i = 0; hhmm[i]; i++) {
-        x += clock_char(c, x, y, w, h, t, hhmm[i], color);
-        x += gap;
+        x += clock_char(c, x, y, h, hhmm[i], color);
+        if (hhmm[i + 1]) {
+            x += gap;
+        }
     }
+}
+
+static void clock_row(canvas_t *c, int y, int h, const char *hhmm, uint16_t color)
+{
+    int x = (CYD_W - clock_width(h, hhmm)) / 2;
+    clock_at(c, x, y, h, hhmm, color);
 }
 
 /* Map a point from the web kitten's 160x140 viewBox. */
@@ -533,7 +621,7 @@ static void paint_saver(canvas_t *c, const cyd_scene_t *scene)
     } else {
         memcpy(hhmm, "--:--", 6);
     }
-    clock_row(c, 2, 34, 56, 6, 4, hhmm, c->white);
+    clock_row(c, 2, 58, hhmm, c->white);
     if (scene->time_valid) {
         char date[20];
         date_line(scene, date, sizeof date);
@@ -561,7 +649,7 @@ static void paint_awake(canvas_t *c, const cyd_scene_t *scene)
     } else {
         memcpy(hhmm, "--:--", 6);
     }
-    text(c, 8, 8, 2, hhmm, c->white);
+    clock_at(c, 8, 6, 20, hhmm, c->white);
     weather_pair(c, 168, 8, 2, scene->temp_c, scene->humidity);
     kitten(c, 24, 40, 1, 2, scene->blink, scene->tail);
     text_center(c, 116, 2, "Calico", c->warm);
