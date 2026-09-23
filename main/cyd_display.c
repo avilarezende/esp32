@@ -139,7 +139,11 @@ static esp_err_t panel_bringup(void)
         .mode = GPIO_MODE_OUTPUT,
         .pin_bit_mask = 1ULL << PIN_LCD_BL,
     };
-    ESP_ERROR_CHECK(gpio_config(&bl));
+    esp_err_t err = gpio_config(&bl);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "backlight gpio failed: %s", esp_err_to_name(err));
+        return err;
+    }
     gpio_set_level(PIN_LCD_BL, 0);
 
     spi_bus_config_t bus = {
@@ -150,19 +154,28 @@ static esp_err_t panel_bringup(void)
         .quadhd_io_num = -1,
         .max_transfer_sz = CYD_W * BAND_H * (int)sizeof(uint16_t),
     };
-    ESP_ERROR_CHECK(spi_bus_initialize(LCD_HOST, &bus, SPI_DMA_CH_AUTO));
+    /* DMA on SPI2 fights the Wi-Fi driver on the ESP32 and reboots the CYD. */
+    err = spi_bus_initialize(LCD_HOST, &bus, SPI_DMA_DISABLED);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "lcd spi bus failed: %s", esp_err_to_name(err));
+        return err;
+    }
 
     esp_lcd_panel_io_handle_t io = NULL;
     esp_lcd_panel_io_spi_config_t io_cfg = {
         .dc_gpio_num = PIN_LCD_DC,
         .cs_gpio_num = PIN_LCD_CS,
-        .pclk_hz = 40 * 1000 * 1000,
+        .pclk_hz = 20 * 1000 * 1000,
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
         .spi_mode = 0,
         .trans_queue_depth = 10,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_cfg, &io));
+    err = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_cfg, &io);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "lcd panel io failed: %s", esp_err_to_name(err));
+        return err;
+    }
 
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = -1,
@@ -173,14 +186,32 @@ static esp_err_t panel_bringup(void)
 #endif
         .bits_per_pixel = 16,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_ili9341(io, &panel_cfg, &s_panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
-    /* Landscape, same MADCTL as TFT_eSPI rotation 1 on this board. */
-    ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(s_panel, true));
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, false, false));
-    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, true));
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
+    err = esp_lcd_new_panel_ili9341(io, &panel_cfg, &s_panel);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "ili9341 create failed: %s", esp_err_to_name(err));
+        return err;
+    }
+    err = esp_lcd_panel_reset(s_panel);
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_init(s_panel);
+    }
+    if (err == ESP_OK) {
+        /* Landscape, same MADCTL as TFT_eSPI rotation 1 on this board. */
+        err = esp_lcd_panel_swap_xy(s_panel, true);
+    }
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_mirror(s_panel, false, false);
+    }
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_invert_color(s_panel, true);
+    }
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_disp_on_off(s_panel, true);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "ili9341 init failed: %s", esp_err_to_name(err));
+        return err;
+    }
 
     spi_bus_config_t tbus = {
         .sclk_io_num = PIN_TOUCH_SCLK,
@@ -190,7 +221,7 @@ static esp_err_t panel_bringup(void)
         .quadhd_io_num = -1,
         .max_transfer_sz = 32,
     };
-    esp_err_t err = spi_bus_initialize(TOUCH_HOST, &tbus, SPI_DMA_DISABLED);
+    err = spi_bus_initialize(TOUCH_HOST, &tbus, SPI_DMA_DISABLED);
     if (err == ESP_OK) {
         spi_device_interface_config_t dev = {
             .clock_speed_hz = 2500000,
@@ -244,7 +275,7 @@ static void display_task(void *arg)
         }
 
         int64_t idle_ms = (esp_timer_get_time() - idle_since) / 1000;
-        if (wifi_manager_is_provisioning()) {
+        if (!wifi_manager_is_connected()) {
             scene.mode = CYD_UI_PORTAL;
         } else if (idle_ms >= IDLE_MS) {
             scene.mode = CYD_UI_SAVER;
@@ -265,7 +296,7 @@ esp_err_t cyd_display_start(void)
     if (err != ESP_OK) {
         return err;
     }
-    if (xTaskCreate(display_task, "cyd", 6144, NULL, 1, NULL) != pdPASS) {
+    if (xTaskCreate(display_task, "cyd", 8192, NULL, 1, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;

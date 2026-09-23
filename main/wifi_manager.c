@@ -62,9 +62,15 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
     }
     switch (id) {
         case WIFI_EVENT_STA_START:
-            esp_wifi_connect();
+            /* APSTA with no saved network must not transmit a join. */
+            if (s_ssid[0] != '\0') {
+                esp_wifi_connect();
+            }
             break;
         case WIFI_EVENT_STA_DISCONNECTED: {
+            if (s_ssid[0] == '\0') {
+                break;
+            }
             wifi_event_sta_disconnected_t *ev = (wifi_event_sta_disconnected_t *)data;
             snprintf(s_disconnect_reason, sizeof(s_disconnect_reason), "%s (%d)",
                      reason_to_str(ev->reason), ev->reason);
@@ -216,7 +222,20 @@ int wifi_manager_get_rssi(void)
     return 0;
 }
 
-#if CONFIG_APP_ENABLE_WIFI_RADIO
+#if CONFIG_APP_ENABLE_WIFI_RADIO && CONFIG_APP_ENABLE_CYD
+/* The CYD regulator resets if the radio transmits at full power while the
+ * backlight is on. 34 is 8.5 dBm, enough for a phone next to the board. */
+static void calm_cyd_radio(void)
+{
+    esp_err_t err = esp_wifi_set_max_tx_power(34);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "could not lower TX power (%s)", esp_err_to_name(err));
+    }
+    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+}
+#endif
+
+#if CONFIG_APP_ENABLE_WIFI_RADIO && !CONFIG_APP_ENABLE_CYD
 static void start_softap(void)
 {
     wifi_config_t ap_config = {
@@ -257,7 +276,7 @@ static bool try_connect_sta(const char *ssid, const char *password)
                                            pdFALSE, pdFALSE, portMAX_DELAY);
     return (bits & WIFI_CONNECTED_BIT) != 0;
 }
-#endif /* CONFIG_APP_ENABLE_WIFI_RADIO */
+#endif /* CONFIG_APP_ENABLE_WIFI_RADIO && !CONFIG_APP_ENABLE_CYD */
 
 /* Append a JSON-escaped copy of `s` to buf (only " and \ need escaping here). */
 static void append_json_escaped(char *buf, size_t buf_len, const char *s)
@@ -339,6 +358,37 @@ esp_err_t wifi_manager_start(void)
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                         &on_wifi_event, NULL, NULL));
 
+#if CONFIG_APP_ENABLE_CYD
+    /* Keep ESP32-Setup up the whole time. A stored network is joined in the
+     * background; blocking here used to brown out the board before the AP
+     * beaconed, so the phone never finished associating. */
+    {
+        wifi_config_t ap_config = {
+            .ap = {
+                .ssid = WIFI_MANAGER_AP_SSID,
+                .ssid_len = strlen(WIFI_MANAGER_AP_SSID),
+                .password = WIFI_MANAGER_AP_PASS,
+                .max_connection = 4,
+                .authmode = WIFI_AUTH_WPA2_PSK,
+                .channel = 1,
+            },
+        };
+        ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+        ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
+        if (have_creds) {
+            wifi_config_t sta_config = {0};
+            strlcpy((char *)sta_config.sta.ssid, ssid, sizeof(sta_config.sta.ssid));
+            strlcpy((char *)sta_config.sta.password, pass, sizeof(sta_config.sta.password));
+            ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &sta_config));
+            s_state = WIFI_MANAGER_STATE_CONNECTING;
+        } else {
+            s_state = WIFI_MANAGER_STATE_PROVISIONING;
+        }
+        ESP_ERROR_CHECK(esp_wifi_start());
+        calm_cyd_radio();
+        ESP_LOGI(TAG, "config AP up: SSID '%s'", WIFI_MANAGER_AP_SSID);
+    }
+#else
     if (have_creds) {
         s_state = WIFI_MANAGER_STATE_CONNECTING;
         if (try_connect_sta(ssid, pass)) {
@@ -354,6 +404,7 @@ esp_err_t wifi_manager_start(void)
         start_softap();
         s_state = WIFI_MANAGER_STATE_PROVISIONING;
     }
+#endif
 #else
     /* QEMU build: no Wi-Fi radio. Serve the portal (and, when credentials are
      * stored, a simulated "connected" status page) over the emulated Ethernet
