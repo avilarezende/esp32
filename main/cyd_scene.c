@@ -564,7 +564,7 @@ static void paint_awake(canvas_t *c, const cyd_scene_t *scene)
     text(c, 8, 8, 2, hhmm, c->white);
     weather_pair(c, 168, 8, 2, scene->temp_c, scene->humidity);
     kitten(c, 24, 40, 1, 2, scene->blink, scene->tail);
-    text_center(c, 116, 2, "Gatinho", c->warm);
+    text_center(c, 116, 2, "Calico", c->warm);
     if (scene->ip[0]) {
         text_center(c, 178, 2, scene->ip, c->cool);
     }
