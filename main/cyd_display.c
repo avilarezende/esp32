@@ -15,7 +15,6 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_ili9341.h"
-#include "esp_heap_caps.h"
 #include "esp_idf_version.h"
 #include "esp_log.h"
 #include "esp_netif_sntp.h"
@@ -47,6 +46,11 @@ static esp_lcd_panel_handle_t s_panel;
 static spi_device_handle_t s_touch;
 static int s_sntp_started;
 
+/* DRAM, not the heap. On ESP-IDF 6, MALLOC_CAP_INTERNAL can return 32-bit
+ * IRAM; a uint16 store there is a LoadStoreError and reboots the chip. */
+static uint16_t s_band[CYD_W * BAND_H];
+static uint16_t s_wire[CYD_W * BAND_H];
+
 static int xpt_sample(uint8_t cmd)
 {
     if (!s_touch) {
@@ -76,32 +80,18 @@ static int touch_down(void)
 
 static void flush_band(const uint16_t *src, int y, int rows)
 {
-    static uint16_t *wire;
-    if (!wire) {
-        wire = heap_caps_malloc(CYD_W * BAND_H * sizeof(uint16_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    }
-    if (!wire) {
-        return;
-    }
     for (int i = 0; i < CYD_W * rows; i++) {
         uint16_t c = src[i];
-        wire[i] = (uint16_t)((c << 8) | (c >> 8));
+        s_wire[i] = (uint16_t)((c << 8) | (c >> 8));
     }
-    esp_lcd_panel_draw_bitmap(s_panel, 0, y, CYD_W, y + rows, wire);
+    esp_lcd_panel_draw_bitmap(s_panel, 0, y, CYD_W, y + rows, s_wire);
 }
 
 static void present(const cyd_scene_t *scene)
 {
-    static uint16_t *band;
-    if (!band) {
-        band = heap_caps_malloc(CYD_W * BAND_H * sizeof(uint16_t), MALLOC_CAP_INTERNAL);
-        if (!band) {
-            return;
-        }
-    }
     for (int y = 0; y < CYD_H; y += BAND_H) {
-        cyd_scene_paint(band, y, BAND_H, scene);
-        flush_band(band, y, BAND_H);
+        cyd_scene_paint(s_band, y, BAND_H, scene);
+        flush_band(s_band, y, BAND_H);
     }
 }
 
