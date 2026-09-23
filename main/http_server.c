@@ -19,27 +19,32 @@ static const char *TAG = "http_config";
 #define POST_BODY_MAXLEN 512
 #define SCAN_JSON_MAXLEN 1024
 
+/* Touch-sized portal: 48px targets, 16px type, card fits a 320px-wide panel. */
 static const char PAGE_HEAD[] =
     "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
     "<title>ESP32 Wi-Fi</title><style>"
+    "*{box-sizing:border-box}"
     "body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"
-    "background:#0f172a;color:#e2e8f0;margin:0;display:flex;min-height:100vh;"
-    "align-items:center;justify-content:center}"
-    ".card{background:#1e293b;padding:28px 32px;border-radius:14px;width:340px;"
+    "background:#0f172a;color:#e2e8f0;margin:0;min-height:100vh;display:flex;"
+    "align-items:flex-start;justify-content:center;padding:12px}"
+    ".card{background:#1e293b;padding:16px;border-radius:14px;width:min(400px,100%);"
     "box-shadow:0 10px 30px rgba(0,0,0,.4)}"
-    "h1{font-size:1.25rem;margin:0 0 4px}p{color:#94a3b8;font-size:.85rem;margin:0 0 14px}"
-    "label{display:block;font-size:.8rem;margin:14px 0 6px;color:#cbd5e1}"
-    "input{width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;"
-    "border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:.95rem}"
-    "button{width:100%;margin-top:18px;padding:11px;border:0;border-radius:8px;"
-    "background:#3b82f6;color:#fff;font-size:1rem;font-weight:600;cursor:pointer}"
-    "button:hover{background:#2563eb}button.alt{background:#475569}button.alt:hover{background:#334155}"
-    "ul{list-style:none;padding:0;margin:8px 0 0}li{margin:0 0 6px}"
+    "h1{font-size:1.25rem;margin:0 0 4px}p{color:#d6e0ee;font-size:.95rem;margin:0 0 12px}"
+    "label{display:block;font-size:.9rem;margin:12px 0 6px;color:#e2e8f0}"
+    "input,button,.net{min-height:48px;font-size:16px}"
+    "input{width:100%;padding:12px;border-radius:10px;border:1px solid #334155;"
+    "background:#0f172a;color:#e2e8f0}"
+    "button{width:100%;margin-top:16px;padding:12px 14px;border:0;border-radius:10px;"
+    "background:#1d4ed8;color:#fff;font-weight:700;cursor:pointer}"
+    "button:active{background:#1e40af}button.alt{background:#334155}button.alt:active{background:#1e293b}"
+    "ul{list-style:none;padding:0;margin:8px 0 0}li{margin:0 0 8px}"
     ".net{width:100%;text-align:left;background:#0f172a;border:1px solid #334155;"
-    "border-radius:8px;padding:8px 10px;color:#e2e8f0;cursor:pointer;font-size:.9rem;margin:0}"
-    ".net:hover{border-color:#3b82f6}.row{display:flex;justify-content:space-between}"
-    ".muted{color:#94a3b8;font-size:.8rem}.warn{color:#fca5a5}</style></head><body><div class=\"card\">";
+    "border-radius:10px;padding:12px;color:#e2e8f0;cursor:pointer;margin:0}"
+    ".net:active{border-color:#60a5fa}.row{display:flex;justify-content:space-between;align-items:center}"
+    ".muted{color:#d6e0ee;font-size:.9rem}.warn{color:#fecaca}"
+    "a.muted{min-height:44px;display:inline-flex;align-items:center}"
+    "</style></head><body><div class=\"card\">";
 
 static const char PAGE_TAIL[] = "</div></body></html>";
 
@@ -119,135 +124,16 @@ static void send_config_page(httpd_req_t *req)
 
 /* ---- assistant web app (served once connected) ---- */
 
-/* Single-quoted attributes/JS keep C-string escaping minimal. */
-static const char APP_HTML[] =
-"<!DOCTYPE html><html lang='pt-br'><head><meta charset='utf-8'>"
-"<meta name='viewport' content='width=device-width, initial-scale=1'>"
-"<title>ESP32 Assistant</title><style>"
-"*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;"
-"background:#0f172a;color:#e2e8f0}"
-"[hidden]{display:none!important}"
-".overlay{position:fixed;inset:0;background:rgba(2,6,23,.85);display:flex;align-items:center;justify-content:center;padding:16px;z-index:9}"
-".card{background:#1e293b;padding:22px 24px;border-radius:14px;width:360px;max-width:100%;box-shadow:0 10px 30px rgba(0,0,0,.4)}"
-"h1{font-size:1.15rem;margin:0 0 6px}p{color:#94a3b8;font-size:.85rem;margin:0 0 12px}"
-"label{display:block;font-size:.8rem;margin:12px 0 6px;color:#cbd5e1}"
-".opt{display:flex;align-items:center;gap:8px;margin:6px 0}"
-"input,select{width:100%;padding:10px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-size:.95rem}"
-".row2{display:flex;gap:8px}.row2 button{width:auto;white-space:nowrap;margin:0}"
-"button{width:100%;margin-top:16px;padding:11px;border:0;border-radius:8px;background:#3b82f6;color:#fff;font-weight:600;cursor:pointer}"
-"button:hover{background:#2563eb}button.alt{background:#475569}"
-".tabs{display:flex;gap:4px;padding:10px;background:#111827;position:sticky;top:0}"
-".tabs button{margin:0;background:#1e293b}.tabs button.act{background:#3b82f6}"
-"main{max-width:520px;margin:0 auto;padding:16px}"
-".avatar{width:110px;height:110px;border-radius:50%;margin:6px auto 10px;position:relative;"
-"background:radial-gradient(circle at 50% 35%,#38bdf8,#2563eb 70%);box-shadow:0 8px 24px rgba(37,99,235,.45)}"
-".eyes{position:absolute;top:42px;left:0;right:0;display:flex;justify-content:center;gap:22px}"
-".eye{width:12px;height:12px;border-radius:50%;background:#0b1220;animation:blink 4s infinite}"
-".mouth{position:absolute;bottom:28px;left:50%;transform:translateX(-50%);width:40px;height:8px;border-radius:6px;background:#0b1220}"
-".avatar.speaking .mouth{animation:talk .3s infinite}"
-"@keyframes blink{0%,92%,100%{transform:scaleY(1)}96%{transform:scaleY(.12)}}"
-"@keyframes talk{0%,100%{height:8px;width:40px}50%{height:20px;width:30px}}"
-".botname{text-align:center;color:#93c5fd;font-weight:600;margin-bottom:10px}"
-"#log{height:46vh;overflow:auto;display:flex;flex-direction:column;gap:8px;padding:4px}"
-".m{max-width:80%;padding:9px 12px;border-radius:12px;font-size:.92rem;line-height:1.3}"
-".m.you{align-self:flex-end;background:#3b82f6}.m.bot{align-self:flex-start;background:#334155}"
-".composer{display:flex;gap:8px;margin-top:10px}.composer input{flex:1}.composer button{width:auto;margin:0}"
-".grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}"
-".dev{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:12px}"
-".dev.on{border-color:#22c55e}.dn{font-weight:600}.dr{color:#94a3b8;font-size:.8rem}"
-".ds{margin-top:6px;font-size:.85rem}.dev.on .ds{color:#86efac}.dev.off .ds{color:#94a3b8}"
-".kv{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #24324a;font-size:.9rem}"
-".muted{color:#94a3b8}.net{width:100%;text-align:left;background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px;color:#e2e8f0;margin:6px 0 0}"
-".net:hover{border-color:#3b82f6}"
-"</style></head><body>"
-
-/* hub onboarding */
-"<div id='ob' class='overlay' hidden><div class='card'>"
-"<h1>Configuracao inicial</h1>"
-"<p>Deseja incluir um hub da casa (HomeKit / Home Assistant) para ver e controlar seus dispositivos?</p>"
-"<label class='opt'><input type='radio' name='inc' id='inc-yes' checked onchange='obToggle()'> Sim, incluir um hub</label>"
-"<label class='opt'><input type='radio' name='inc' id='inc-no' onchange='obToggle()'> Agora nao</label>"
-"<div id='hubfields'>"
-"<label>Tipo</label><select id='htype'><option value='homeassistant'>Home Assistant</option>"
-"<option value='homekit'>HomeKit</option><option value='mqtt'>MQTT</option></select>"
-"<label>Endereco</label><div class='row2'><input id='haddr' placeholder='ex: homeassistant.local:8123'>"
-"<button type='button' class='alt' onclick='discover()'>Pesquisar</button></div>"
-"<select id='disc' hidden onchange='discPick(this.value)'></select>"
-"<label>Usuario</label><input id='huser' placeholder='usuario'>"
-"<label>Senha / token</label><input id='hpass' type='password' placeholder='senha ou token'>"
-"</div><button onclick='saveHub(event)'>Continuar</button></div></div>"
-
-/* bot chooser */
-"<div id='botsel' class='overlay' hidden><div class='card'>"
-"<h1>Escolha o bot principal</h1>"
-"<p>Sua conta tem mais de um bot. Escolha qual aparece com o avatar.</p>"
-"<div id='botlist'></div></div></div>"
-
-/* app */
-"<div id='app' hidden>"
-"<nav class='tabs'><button data-tab='chat' class='act'>Assistente</button>"
-"<button data-tab='dev'>Dispositivos</button><button data-tab='set'>Ajustes</button></nav>"
-"<main>"
-"<section id='tab-chat'>"
-"<div id='avatar' class='avatar'><div class='eyes'><span class='eye'></span><span class='eye'></span></div><div class='mouth'></div></div>"
-"<div id='botname' class='botname'>Grok</div>"
-"<div id='log'></div>"
-"<form class='composer' onsubmit='send(event)'><input id='msg' placeholder='Pergunte algo ao seu bot...' autocomplete='off'><button>Enviar</button></form>"
-"</section>"
-"<section id='tab-dev' hidden><div id='devs' class='grid'></div></section>"
-"<section id='tab-set' hidden>"
-"<div class='kv'><span class='muted'>Rede</span><span id='s-ssid'>-</span></div>"
-"<div class='kv'><span class='muted'>IP</span><span id='s-ip'>-</span></div>"
-"<div class='kv'><span class='muted'>Hub</span><span id='s-hub'>-</span></div>"
-"<label>Bot principal</label><select id='s-bot' onchange='changeBot(this.value)'></select>"
-"<button class='alt' onclick='forget()'>Esquecer rede Wi-Fi</button>"
-"</section></main></div>"
-
-"<script>"
-"var S=null,BOTS=null;"
-"function $(s){return document.querySelector(s);}"
-"async function jget(u){return (await fetch(u)).json();}"
-"function post(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b});}"
-"function esc(t){var d=document.createElement('div');d.textContent=t;return d.innerHTML;}"
-"function show(id){['ob','botsel','app'].forEach(function(x){$('#'+x).hidden=(x!==id);});}"
-"function obToggle(){$('#hubfields').hidden=$('#inc-no').checked;}"
-"function discPick(v){if(v)$('#haddr').value=v;}"
-"async function discover(){var l=await jget('/hub/discover');var s=$('#disc');s.innerHTML='<option value=\"\">(escolher encontrado)</option>';l.forEach(function(c){var o=document.createElement('option');o.value=c.addr;o.textContent=c.name+' - '+c.addr;s.appendChild(o);});s.hidden=false;}"
-"async function saveHub(e){e.preventDefault();var inc=$('#inc-yes').checked;var b='enabled='+(inc?'1':'0');"
-"if(inc){b+='&type='+encodeURIComponent($('#htype').value)+'&address='+encodeURIComponent($('#haddr').value)+'&user='+encodeURIComponent($('#huser').value)+'&password='+encodeURIComponent($('#hpass').value);}"
-"await post('/hub',b);await boot();}"
-"async function showBots(){BOTS=await jget('/bots');var w=$('#botlist');w.innerHTML='';BOTS.forEach(function(bt){var x=document.createElement('button');x.className='net';x.textContent=bt.name+(bt.controlsDevices?'  (controla dispositivos)':'');x.onclick=function(){chooseBot(bt.id);};w.appendChild(x);});show('botsel');}"
-"async function chooseBot(id){await post('/bot','id='+encodeURIComponent(id));await boot();}"
-"async function changeBot(id){await post('/bot','id='+encodeURIComponent(id));S=await jget('/state');setName();}"
-"function setName(){var b=(BOTS||[]).find(function(x){return x.id===S.principalBot;})||(BOTS||[])[0];$('#botname').textContent=b?b.name:'Grok';}"
-"function tab(t){['chat','dev','set'].forEach(function(x){$('#tab-'+x).hidden=(x!==t);});"
-"document.querySelectorAll('[data-tab]').forEach(function(btn){btn.classList.toggle('act',btn.dataset.tab===t);});"
-"if(t==='dev')loadDevices();if(t==='set')loadSettings();}"
-"async function boot(){S=await jget('/state');"
-"if(!S.onboardingDone){show('ob');obToggle();}"
-"else if(S.botCount>1&&!S.principalBot){await showBots();}"
-"else{if(!BOTS)BOTS=await jget('/bots');setName();show('app');tab('chat');}}"
-"function addMsg(w,t){var l=$('#log');var d=document.createElement('div');d.className='m '+w;d.innerHTML=esc(t);l.appendChild(d);l.scrollTop=l.scrollHeight;}"
-"function speak(){var a=$('#avatar');a.classList.add('speaking');setTimeout(function(){a.classList.remove('speaking');},1600);}"
-"async function send(e){e.preventDefault();var i=$('#msg');var t=i.value.trim();if(!t)return;addMsg('you',t);i.value='';"
-"var r=await (await post('/chat','message='+encodeURIComponent(t))).json();speak();addMsg('bot',r.reply);}"
-"async function loadDevices(){var g=$('#devs');g.innerHTML='<p class=muted>carregando...</p>';var l=await jget('/devices');g.innerHTML='';"
-"l.forEach(function(d){var c=document.createElement('div');c.className='dev '+(d.on?'on':'off');"
-"c.innerHTML='<div class=dn>'+esc(d.name)+'</div><div class=dr>'+esc(d.room)+'</div><div class=ds>'+(d.on?'ligado':'desligado')+(d.detail?(' - '+esc(d.detail)):'')+'</div>';g.appendChild(c);});}"
-"async function loadSettings(){$('#s-ssid').textContent=S.ssid||'-';$('#s-ip').textContent=S.ip||'-';"
-"$('#s-hub').textContent=S.hubConfigured?(S.hubType+' @ '+S.hubAddr):'nenhum';"
-"if(!BOTS)BOTS=await jget('/bots');var s=$('#s-bot');s.innerHTML='';BOTS.forEach(function(b){var o=document.createElement('option');o.value=b.id;o.textContent=b.name;if(b.id===S.principalBot)o.selected=true;s.appendChild(o);});}"
-"async function forget(){await post('/forget','');location.reload();}"
-"document.querySelectorAll('[data-tab]').forEach(function(b){b.onclick=function(){tab(b.dataset.tab);};});"
-"boot();"
-"</script></body></html>";
+/* Touch UI lives in app.html (embedded). Symbol names come from EMBED_TXTFILES. */
+extern const char app_html_start[] asm("_binary_app_html_start");
 
 static void send_app_page(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_sendstr(req, APP_HTML);
+    httpd_resp_send(req, app_html_start, strlen(app_html_start));
 }
+
 
 /* Build a JSON document with `fn` and send it. */
 static esp_err_t send_json(httpd_req_t *req, void (*fn)(char *, size_t), size_t cap)
@@ -279,6 +165,7 @@ static esp_err_t state_get_handler(httpd_req_t *req)   { return send_json(req, a
 static esp_err_t bots_get_handler(httpd_req_t *req)    { return send_json(req, assistant_bots_json, 384); }
 static esp_err_t devices_get_handler(httpd_req_t *req) { return send_json(req, assistant_devices_json, 1024); }
 static esp_err_t discover_get_handler(httpd_req_t *req){ return send_json(req, assistant_discover_json, 256); }
+static esp_err_t weather_get_handler(httpd_req_t *req) { return send_json(req, assistant_weather_json, 192); }
 
 static esp_err_t chat_post_handler(httpd_req_t *req)
 {
@@ -428,7 +315,7 @@ httpd_handle_t http_config_server_start(void)
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.lru_purge_enable = true;
-    config.max_uri_handlers = 12;
+    config.max_uri_handlers = 16;
 
     if (httpd_start(&server, &config) != ESP_OK) {
         return NULL;
@@ -443,6 +330,7 @@ httpd_handle_t http_config_server_start(void)
         { .uri = "/bots",         .method = HTTP_GET,  .handler = bots_get_handler },
         { .uri = "/devices",      .method = HTTP_GET,  .handler = devices_get_handler },
         { .uri = "/hub/discover", .method = HTTP_GET,  .handler = discover_get_handler },
+        { .uri = "/weather",      .method = HTTP_GET,  .handler = weather_get_handler },
         { .uri = "/chat",         .method = HTTP_POST, .handler = chat_post_handler },
         { .uri = "/hub",          .method = HTTP_POST, .handler = hub_post_handler },
         { .uri = "/bot",          .method = HTTP_POST, .handler = bot_post_handler },

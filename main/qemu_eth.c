@@ -3,6 +3,7 @@
 #if CONFIG_ETH_USE_OPENETH
 
 #include "esp_log.h"
+#include "esp_idf_version.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
 #include "esp_eth.h"
@@ -12,6 +13,12 @@ static const char *TAG = "qemu_eth";
 
 esp_err_t qemu_eth_start(void)
 {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+    /* ESP-IDF 6 moved esp_eth_phy_new_dp83848 into the espressif/dp83848
+     * component. The CYD image never starts this MAC. */
+    ESP_LOGW(TAG, "OpenETH PHY is not in ESP-IDF 6; emulated Ethernet is unavailable");
+    return ESP_ERR_NOT_SUPPORTED;
+#else
     /* The default netif and event loop are already created by wifi_manager. */
     esp_netif_config_t netif_cfg = ESP_NETIF_DEFAULT_ETH();
     esp_netif_t *eth_netif = esp_netif_new(&netif_cfg);
@@ -51,6 +58,7 @@ esp_err_t qemu_eth_start(void)
         ESP_LOGI(TAG, "emulated Ethernet started (QEMU); portal reachable over it");
     }
     return err;
+#endif
 }
 
 #else /* !CONFIG_ETH_USE_OPENETH */

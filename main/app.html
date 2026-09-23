@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>ESP32 Assistente</title>
+<style>
+:root{
+  --bg:#0b1220; --surface:#152033; --line:#314158; --text:#f8fafc;
+  --muted:#d6e0ee; --dim:#b7c3d4; --accent:#1d4ed8; --warm:#fdba74; --cool:#7dd3fc;
+  --tap:48px; --nav:56px;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:16px; line-height:1.35;
+  touch-action:manipulation; -webkit-tap-highlight-color:transparent;
+}
+button,input,select{font:inherit; color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid #93c5fd; outline-offset:2px}
+[hidden]{display:none !important}
+
+.overlay{
+  position:fixed; inset:0; z-index:9; background:var(--bg);
+  display:flex; justify-content:center;
+}
+.sheet{
+  width:min(480px,100%); height:100%; display:flex; flex-direction:column; background:var(--surface);
+}
+.sheet .body{flex:1; min-height:0; overflow:auto; padding:16px}
+.sheet .foot{
+  flex:none; padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+  border-top:1px solid var(--line); background:#10192b;
+}
+h1{font-size:1.25rem; margin:0 0 6px}
+.lead{color:var(--muted); margin:0 0 14px}
+label{display:block; margin:12px 0 6px; color:var(--muted)}
+input,select{
+  width:100%; min-height:var(--tap); padding:10px 12px; border-radius:12px;
+  border:1px solid var(--line); background:#0f172a;
+}
+.choice{
+  width:100%; min-height:52px; margin:0 0 8px; text-align:left; padding:12px 14px;
+  border-radius:12px; border:2px solid var(--line); background:#0f172a; font-weight:650;
+}
+.choice.act{border-color:#60a5fa; background:#172554}
+.primary,.alt{
+  width:100%; min-height:var(--tap); border:0; border-radius:12px; font-weight:700;
+}
+.primary{background:var(--accent); color:#fff}
+.primary:active{background:#1e40af}
+.alt{background:#334155; color:#fff}
+.alt:active{background:#1e293b}
+.danger{background:#9f1239}
+.net{
+  width:100%; min-height:56px; text-align:left; margin:0 0 8px; padding:12px 14px;
+  border-radius:12px; border:1px solid var(--line); background:#0f172a; font-weight:650;
+}
+.net:active{border-color:#60a5fa}
+
+#app{
+  height:100%; max-width:480px; margin:0 auto;
+  display:flex; flex-direction:column; background:var(--bg);
+}
+.status{
+  flex:none; display:flex; align-items:center; justify-content:space-between;
+  gap:8px; min-height:44px; padding:4px 12px;
+  background:#10192b; border-bottom:1px solid var(--line);
+}
+.clock{
+  font-size:22px; font-weight:750; letter-spacing:-.03em;
+  font-variant-numeric:tabular-nums;
+}
+.wxchip{display:flex; align-items:center; gap:10px; font-weight:750}
+.wxchip .t{color:var(--warm); font-size:20px; font-variant-numeric:tabular-nums}
+.wxchip .h{color:var(--cool); font-size:18px; font-variant-numeric:tabular-nums}
+.wxglyph{width:22px; height:22px; display:block}
+.wxglyph svg{width:22px; height:22px; display:block}
+
+main{flex:1; min-height:0; display:flex; flex-direction:column}
+main>section{flex:1; min-height:0; overflow:auto}
+#tab-chat{display:flex; flex-direction:column; overflow:hidden}
+.stage{flex:1; min-height:0; display:flex; flex-direction:column}
+.hero{display:flex; flex-direction:column; align-items:center; padding:6px 12px 0; flex:none}
+.kit-wrap{width:128px}
+.kit{width:100%; height:auto; display:block; overflow:visible; transform-origin:50% 80%; animation:breathe 3.4s ease-in-out infinite}
+.who{font-weight:750; font-size:18px; text-align:center}
+.hint{color:var(--dim); font-size:14px; text-align:center; margin:0}
+#log{
+  flex:1; min-height:0; overflow:auto; display:flex; flex-direction:column;
+  gap:8px; padding:8px 12px 4px;
+}
+.empty{color:var(--dim); font-size:15px; margin:auto 0; text-align:center}
+.m{max-width:85%; padding:10px 12px; border-radius:14px; line-height:1.35}
+.m.you{align-self:flex-end; background:#1d4ed8}
+.m.bot{align-self:flex-start; background:#243044}
+.composer{display:flex; gap:8px; padding:8px 12px; flex:none}
+.composer input{flex:1; min-width:0}
+.composer button{width:auto; min-width:72px; min-height:var(--tap); margin:0; padding:0 14px}
+
+nav{
+  flex:none; display:flex; border-top:1px solid var(--line); background:#10192b;
+  padding-bottom:env(safe-area-inset-bottom);
+}
+nav button{
+  flex:1; min-height:var(--nav); border:0; background:transparent; color:var(--muted);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:2px; font-size:13px; font-weight:700;
+}
+nav button svg{width:22px; height:22px}
+nav button.act{color:#fff; background:#1e3a5f}
+nav button:active{background:#243044}
+
+.dev{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  min-height:64px; margin:8px 12px; padding:12px 14px;
+  background:var(--surface); border:1px solid var(--line); border-radius:14px;
+}
+.dev.on{border-color:#166534}
+.dn{font-weight:750}
+.dr{color:var(--dim); font-size:14px}
+.ds{font-weight:700}
+.dev.on .ds{color:#86efac}
+.dev.off .ds{color:var(--dim)}
+.pad{padding:8px 12px 16px}
+.kv{
+  display:flex; justify-content:space-between; align-items:center; gap:12px;
+  min-height:48px; border-bottom:1px solid var(--line);
+}
+.kv span:last-child{font-weight:650; text-align:right; max-width:62%}
+
+#saver{
+  position:fixed; inset:0; z-index:20; width:100%; margin:0; border:0;
+  background:#070b14; color:#fff;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  text-align:center; padding:8px 12px; gap:0;
+}
+.saver-time{
+  font-size:clamp(56px,26vh,128px); font-weight:760; letter-spacing:-.045em;
+  font-variant-numeric:tabular-nums; line-height:.9;
+}
+.saver-date{font-size:clamp(15px,4.2vh,22px); color:var(--muted); margin-top:2px}
+.saver-temp{
+  font-size:clamp(36px,13vh,72px); font-weight:760; color:var(--warm);
+  line-height:1; margin-top:6px; font-variant-numeric:tabular-nums;
+}
+.saver-cond{font-size:clamp(15px,4vh,22px); color:var(--muted)}
+.saver-hum{
+  font-size:clamp(18px,5.5vh,30px); font-weight:750; color:var(--cool);
+  font-variant-numeric:tabular-nums;
+}
+.saver-cat{width:clamp(64px,20vh,120px); height:auto; margin-top:2px}
+.saver-hint{margin-top:4px; font-size:13px; color:var(--dim)}
+
+.tail{transform-origin:52px 110px; animation:wag 2.2s ease-in-out infinite}
+.ear-r{transform-origin:122px 46px; animation:twitch 6s ease-in-out infinite}
+.eye{transform-box:fill-box; transform-origin:center; animation:blink 4.6s infinite}
+.mopen{opacity:0}
+.kit.speaking .mopen{opacity:1}
+.kit.speaking .mshut{opacity:0}
+.kit.asleep .eye{animation:none; transform:scaleY(.08)}
+.kit.asleep .tail{animation-duration:4.8s}
+.kit.asleep{animation-duration:4.4s}
+@keyframes blink{0%,90%,100%{transform:scaleY(1)} 95%{transform:scaleY(.08)}}
+@keyframes wag{0%,100%{rotate:-8deg} 50%{rotate:16deg}}
+@keyframes breathe{0%,100%{transform:scale(1)} 50%{transform:scale(1.035)}}
+@keyframes twitch{0%,86%,100%{rotate:0deg} 91%{rotate:8deg} 95%{rotate:-2deg}}
+
+@media (max-height:420px){
+  .stage{flex-direction:row; align-items:stretch}
+  .hero{width:96px; padding:4px 0 4px 6px; justify-content:center}
+  .kit-wrap{width:84px}
+  .who{font-size:13px}
+  .hint{display:none}
+  .status{min-height:36px}
+  .clock{font-size:18px}
+  .wxchip .t{font-size:16px}
+  .wxchip .h{font-size:15px}
+  nav button{min-height:48px; font-size:12px}
+  .composer{padding:4px 8px}
+  #saver{padding:4px 8px}
+  .saver-hint{font-size:12px}
+  .saver-cat{width:56px}
+}
+@media (prefers-reduced-motion:reduce){
+  .kit,.tail,.ear-r,.eye{animation:none !important}
+}
+</style>
+</head>
+<body>
+
+<template id="kit-tpl">
+<svg class="kit" viewBox="0 0 160 140" aria-hidden="true">
+  <g class="tail">
+    <path d="M48 108 C18 104 12 72 30 56" fill="none" stroke="#f6f1e8" stroke-width="16" stroke-linecap="round"/>
+    <path d="M44 104 C22 98 18 76 32 64" fill="none" stroke="#ef8a36" stroke-width="9" stroke-linecap="round"/>
+    <path d="M33 66 C28 56 32 48 40 46" fill="none" stroke="#2a241f" stroke-width="9" stroke-linecap="round"/>
+  </g>
+  <ellipse cx="92" cy="108" rx="38" ry="24" fill="#f6f1e8"/>
+  <ellipse cx="72" cy="104" rx="16" ry="13" fill="#ef8a36"/>
+  <ellipse cx="114" cy="98" rx="14" ry="12" fill="#2a241f"/>
+  <ellipse cx="76" cy="126" rx="11" ry="7" fill="#f6f1e8"/>
+  <ellipse cx="106" cy="126" rx="11" ry="7" fill="#f6f1e8"/>
+  <g class="ear ear-l">
+    <polygon points="62,58 46,16 84,46" fill="#2a241f"/>
+    <polygon points="64,52 54,28 76,46" fill="#f3a6b8"/>
+  </g>
+  <g class="ear ear-r">
+    <polygon points="122,58 140,16 102,46" fill="#ef8a36"/>
+    <polygon points="120,52 130,28 108,46" fill="#f3a6b8"/>
+  </g>
+  <circle cx="92" cy="72" r="32" fill="#f6f1e8"/>
+  <path d="M60 50 C64 30 98 32 100 52 C82 40 68 42 60 54 Z" fill="#2a241f"/>
+  <path d="M112 86 C132 80 132 108 110 108 C100 100 102 90 112 86 Z" fill="#ef8a36"/>
+  <g class="eye"><ellipse cx="78" cy="76" rx="7" ry="8" fill="#241f1c"/><ellipse cx="80.2" cy="73" rx="2.3" ry="2.6" fill="#fff"/></g>
+  <g class="eye"><ellipse cx="108" cy="76" rx="7" ry="8" fill="#241f1c"/><ellipse cx="110.2" cy="73" rx="2.3" ry="2.6" fill="#fff"/></g>
+  <ellipse cx="93" cy="86" rx="4.2" ry="3" fill="#e9899e"/>
+  <path class="mshut" d="M85 92 Q93 98 101 92" fill="none" stroke="#3a312b" stroke-width="1.7" stroke-linecap="round"/>
+  <ellipse class="mopen" cx="93" cy="94" rx="5" ry="3.4" fill="#3a312b"/>
+  <g stroke="#3a312b" stroke-width="1.1" stroke-linecap="round" opacity=".75">
+    <path d="M68 82 L46 76"/><path d="M68 88 L46 90"/>
+    <path d="M116 82 L138 76"/><path d="M116 88 L138 90"/>
+  </g>
+</svg>
+</template>
+
+<div id="ob" class="overlay" hidden>
+  <div class="sheet">
+    <div class="body">
+      <h1>Configuração inicial</h1>
+      <p class="lead">Quer ligar um hub da casa para ver e controlar os dispositivos?</p>
+      <button type="button" class="choice act" id="inc-yes">Sim, incluir um hub</button>
+      <button type="button" class="choice" id="inc-no">Agora não</button>
+      <div id="hubfields">
+        <label for="htype">Tipo</label>
+        <select id="htype">
+          <option value="homeassistant">Home Assistant</option>
+          <option value="homekit">HomeKit</option>
+          <option value="mqtt">MQTT</option>
+        </select>
+        <label for="haddr">Endereço</label>
+        <input id="haddr" placeholder="homeassistant.local:8123" autocomplete="off">
+        <button type="button" class="alt" id="discover" style="margin-top:8px">Pesquisar na rede</button>
+        <div id="disc"></div>
+        <label for="huser">Usuário</label>
+        <input id="huser" placeholder="usuário" autocomplete="off">
+        <label for="hpass">Senha ou token</label>
+        <input id="hpass" type="password" placeholder="senha ou token">
+      </div>
+    </div>
+    <div class="foot"><button type="button" class="primary" id="save-hub">Continuar</button></div>
+  </div>
+</div>
+
+<div id="botsel" class="overlay" hidden>
+  <div class="sheet">
+    <div class="body">
+      <h1>Escolha o bot principal</h1>
+      <p class="lead">Há mais de um bot na conta. Toque no que aparece com o gatinho.</p>
+      <div id="botlist"></div>
+    </div>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <header class="status">
+    <div class="clock" id="now">--:--</div>
+    <div class="wxchip">
+      <span class="wxglyph" id="wx-mini"></span>
+      <span class="t" data-temp>--</span>
+      <span class="h" data-hum>--</span>
+    </div>
+  </header>
+  <main>
+    <section id="tab-chat">
+      <div class="stage">
+        <div class="hero">
+          <div class="kit-wrap" id="pet"></div>
+          <div>
+            <div id="botname" class="who">Assistente</div>
+            <p class="hint">Toque e fale comigo</p>
+          </div>
+        </div>
+        <div id="log"><p class="empty" id="empty">Diga oi. Eu respondo aqui.</p></div>
+      </div>
+      <form class="composer" id="composer">
+        <input id="msg" placeholder="Escreva uma mensagem" autocomplete="off" enterkeyhint="send">
+        <button class="primary" type="submit">Enviar</button>
+      </form>
+    </section>
+    <section id="tab-dev" hidden><div id="devs"></div></section>
+    <section id="tab-set" hidden>
+      <div class="pad">
+        <div class="kv"><span>Rede</span><span id="s-ssid">-</span></div>
+        <div class="kv"><span>IP</span><span id="s-ip">-</span></div>
+        <div class="kv"><span>Hub</span><span id="s-hub">-</span></div>
+        <div class="kv"><span>Clima</span><span id="s-wx">-</span></div>
+        <label for="s-bot">Bot principal</label>
+        <select id="s-bot"></select>
+        <button type="button" class="alt" id="forget" style="margin-top:16px">Esquecer rede Wi-Fi</button>
+      </div>
+    </section>
+  </main>
+  <nav>
+    <button type="button" data-tab="chat" class="act">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 6h14v9H8l-3 3z"/></svg>
+      Chat
+    </button>
+    <button type="button" data-tab="dev">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11l8-7 8 7v9H4z"/><path d="M10 20v-6h4v6"/></svg>
+      Casa
+    </button>
+    <button type="button" data-tab="set">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/></svg>
+      Ajustes
+    </button>
+  </nav>
+</div>
+
+<button type="button" id="saver" hidden aria-label="Protetor de tela. Toque para voltar.">
+  <div class="saver-time" id="saver-time">--:--</div>
+  <div class="saver-date" id="saver-date"></div>
+  <div class="saver-temp" data-temp>--</div>
+  <div class="saver-cond" data-cond>clima</div>
+  <div class="saver-hum">umidade <span data-hum>--</span></div>
+  <div class="saver-cat" id="saver-cat"></div>
+  <div class="saver-hint">Toque para voltar</div>
+</button>
+
+<script>
+var IDLE_MS = 30000;
+var S = null, BOTS = null, W = null, saverOn = false, idleTimer = null, petSvg = null, forgetArm = false;
+
+function $(s){ return document.querySelector(s); }
+function $all(s){ return document.querySelectorAll(s); }
+async function jget(u){ var r = await fetch(u); if (!r.ok) throw new Error(u); return r.json(); }
+function post(u, b){
+  return fetch(u, {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:b});
+}
+function esc(t){ var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+function show(id){ ['ob','botsel','app'].forEach(function(x){ $('#'+x).hidden = (x !== id); }); }
+
+function mountKit(host, asleep){
+  host.textContent = '';
+  var node = document.getElementById('kit-tpl').content.cloneNode(true);
+  var svg = node.querySelector('svg');
+  if (asleep) svg.classList.add('asleep');
+  host.appendChild(node);
+  return host.querySelector('svg');
+}
+
+var GLYPH = {
+  sunny:'<svg viewBox="0 0 24 24" fill="none" stroke="#fdba74" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg>',
+  partly:'<svg viewBox="0 0 24 24" fill="none" stroke="#fdba74" stroke-width="2"><circle cx="8" cy="9" r="3"/><path d="M8 3v1.5M8 14.5V16M3 9h1.5M13 9h1.5"/><path d="M8 18h9a3.5 3.5 0 0 0 0-7 5 5 0 0 0-9.5 1.5" stroke="#7dd3fc"/></svg>',
+  cloudy:'<svg viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="2"><path d="M7 18h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 2"/></svg>',
+  rain:'<svg viewBox="0 0 24 24" fill="none" stroke="#7dd3fc" stroke-width="2"><path d="M7 15h10a4 4 0 0 0 0-8 6 6 0 0 0-11.5 2"/><path d="M8 19l-1 2M12 19l-1 2M16 19l-1 2"/></svg>'
+};
+function paintWx(){
+  var code = (W && GLYPH[W.code]) ? W.code : 'partly';
+  var g = $('#wx-mini');
+  if (g) g.innerHTML = GLYPH[code];
+  $all('[data-temp]').forEach(function(el){ el.textContent = W ? (W.tempC + '°') : '--'; });
+  $all('[data-hum]').forEach(function(el){ el.textContent = W ? (W.humidity + '%') : '--'; });
+  $all('[data-cond]').forEach(function(el){ el.textContent = W ? W.condition : 'clima'; });
+  var sx = $('#s-wx');
+  if (sx) sx.textContent = W ? (W.tempC + '° · ' + W.humidity + '% · ' + W.condition) : '-';
+}
+async function loadWeather(){
+  try { W = await jget('/weather'); } catch (e) { W = null; }
+  paintWx();
+}
+
+function tickClock(){
+  var d = new Date();
+  var hh = String(d.getHours()).padStart(2,'0');
+  var mm = String(d.getMinutes()).padStart(2,'0');
+  var t = hh + ':' + mm;
+  $('#now').textContent = t;
+  $('#saver-time').textContent = t;
+  $('#saver-date').textContent = d.toLocaleDateString('pt-BR', {weekday:'long', day:'numeric', month:'short'});
+}
+
+function showSaver(){
+  saverOn = true;
+  $('#saver').hidden = false;
+  tickClock();
+}
+function hideSaver(){
+  saverOn = false;
+  $('#saver').hidden = true;
+  bump();
+}
+function bump(){
+  if (saverOn) return;
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(showSaver, IDLE_MS);
+}
+
+function setName(){
+  var b = (BOTS || []).find(function(x){ return x.id === S.principalBot; }) || (BOTS || [])[0];
+  $('#botname').textContent = b ? b.name : 'Assistente';
+}
+function tab(t){
+  ['chat','dev','set'].forEach(function(x){ $('#tab-' + x).hidden = (x !== t); });
+  $all('[data-tab]').forEach(function(btn){ btn.classList.toggle('act', btn.dataset.tab === t); });
+  if (t === 'dev') loadDevices();
+  if (t === 'set') loadSettings();
+}
+async function boot(){
+  S = await jget('/state');
+  if (!S.onboardingDone){ show('ob'); }
+  else if (S.botCount > 1 && !S.principalBot){ await showBots(); }
+  else {
+    if (!BOTS) BOTS = await jget('/bots');
+    setName();
+    show('app');
+    tab('chat');
+    loadWeather();
+  }
+}
+function addMsg(w, t){
+  var empty = $('#empty');
+  if (empty) empty.remove();
+  var l = $('#log');
+  var d = document.createElement('div');
+  d.className = 'm ' + w;
+  d.innerHTML = esc(t);
+  l.appendChild(d);
+  l.scrollTop = l.scrollHeight;
+}
+function speak(){
+  if (!petSvg) return;
+  petSvg.classList.add('speaking');
+  clearTimeout(speak.t);
+  speak.t = setTimeout(function(){ petSvg.classList.remove('speaking'); }, 1600);
+}
+async function send(e){
+  e.preventDefault();
+  var i = $('#msg');
+  var t = i.value.trim();
+  if (!t) return;
+  addMsg('you', t);
+  i.value = '';
+  var r = await (await post('/chat', 'message=' + encodeURIComponent(t))).json();
+  speak();
+  addMsg('bot', r.reply);
+}
+async function loadDevices(){
+  var g = $('#devs');
+  g.innerHTML = '<p class="empty">Carregando…</p>';
+  var l = await jget('/devices');
+  g.innerHTML = '';
+  l.forEach(function(d){
+    var c = document.createElement('div');
+    c.className = 'dev ' + (d.on ? 'on' : 'off');
+    c.innerHTML = '<div><div class="dn">' + esc(d.name) + '</div><div class="dr">' + esc(d.room) + '</div></div>'
+      + '<div class="ds">' + (d.on ? 'ligado' : 'desligado') + (d.detail ? (' · ' + esc(d.detail)) : '') + '</div>';
+    g.appendChild(c);
+  });
+}
+async function loadSettings(){
+  $('#s-ssid').textContent = S.ssid || '-';
+  $('#s-ip').textContent = S.ip || '-';
+  $('#s-hub').textContent = S.hubConfigured ? (S.hubType + ' @ ' + S.hubAddr) : 'nenhum';
+  paintWx();
+  if (!BOTS) BOTS = await jget('/bots');
+  var s = $('#s-bot');
+  s.innerHTML = '';
+  BOTS.forEach(function(b){
+    var o = document.createElement('option');
+    o.value = b.id; o.textContent = b.name;
+    if (b.id === S.principalBot) o.selected = true;
+    s.appendChild(o);
+  });
+}
+async function showBots(){
+  BOTS = await jget('/bots');
+  var w = $('#botlist');
+  w.innerHTML = '';
+  BOTS.forEach(function(bt){
+    var x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'net';
+    x.textContent = bt.name + (bt.controlsDevices ? ' · controla a casa' : '');
+    x.onclick = function(){ chooseBot(bt.id); };
+    w.appendChild(x);
+  });
+  show('botsel');
+}
+async function chooseBot(id){
+  await post('/bot', 'id=' + encodeURIComponent(id));
+  await boot();
+}
+function hubIncluded(){ return $('#inc-yes').classList.contains('act'); }
+async function discover(){
+  var l = await jget('/hub/discover');
+  var box = $('#disc');
+  box.innerHTML = '';
+  l.forEach(function(c){
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'net';
+    b.textContent = c.name + ' · ' + c.addr;
+    b.onclick = function(){ $('#haddr').value = c.addr; };
+    box.appendChild(b);
+  });
+}
+async function saveHub(){
+  var inc = hubIncluded();
+  var b = 'enabled=' + (inc ? '1' : '0');
+  if (inc){
+    b += '&type=' + encodeURIComponent($('#htype').value)
+      + '&address=' + encodeURIComponent($('#haddr').value)
+      + '&user=' + encodeURIComponent($('#huser').value)
+      + '&password=' + encodeURIComponent($('#hpass').value);
+  }
+  await post('/hub', b);
+  await boot();
+}
+
+petSvg = mountKit($('#pet'), false);
+mountKit($('#saver-cat'), true);
+tickClock();
+setInterval(tickClock, 1000);
+setInterval(loadWeather, 60000);
+loadWeather();
+
+$('#inc-yes').onclick = function(){ $('#inc-yes').classList.add('act'); $('#inc-no').classList.remove('act'); $('#hubfields').hidden = false; };
+$('#inc-no').onclick = function(){ $('#inc-no').classList.add('act'); $('#inc-yes').classList.remove('act'); $('#hubfields').hidden = true; };
+$('#discover').onclick = discover;
+$('#save-hub').onclick = saveHub;
+$('#composer').onsubmit = send;
+$('#s-bot').onchange = async function(){
+  await post('/bot', 'id=' + encodeURIComponent(this.value));
+  S = await jget('/state');
+  setName();
+};
+$('#forget').onclick = async function(){
+  var b = $('#forget');
+  if (!forgetArm){
+    forgetArm = true;
+    b.classList.add('danger');
+    b.textContent = 'Toque de novo para confirmar';
+    setTimeout(function(){
+      forgetArm = false;
+      b.classList.remove('danger');
+      b.textContent = 'Esquecer rede Wi-Fi';
+    }, 4000);
+    return;
+  }
+  await post('/forget', '');
+  location.reload();
+};
+$all('[data-tab]').forEach(function(b){ b.onclick = function(){ tab(b.dataset.tab); }; });
+$('#saver').onclick = function(){ hideSaver(); };
+['pointerdown','keydown','wheel'].forEach(function(ev){
+  document.addEventListener(ev, function(e){
+    if (saverOn) return;
+    if (e.target && e.target.closest && e.target.closest('#saver')) return;
+    bump();
+  }, {passive:true});
+});
+bump();
+boot();
+</script>
+</body>
+</html>
