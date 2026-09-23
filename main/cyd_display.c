@@ -54,7 +54,7 @@ static uint16_t s_wire[CYD_W * BAND_H];
 static int xpt_sample(uint8_t cmd)
 {
     if (!s_touch) {
-        return 0;
+        return -1;
     }
     spi_transaction_t t = {
         .length = 24,
@@ -62,20 +62,25 @@ static int xpt_sample(uint8_t cmd)
     };
     t.tx_data[0] = cmd;
     if (spi_device_transmit(s_touch, &t) != ESP_OK) {
-        return 0;
+        return -1;
     }
     return ((t.rx_data[1] << 8) | t.rx_data[2]) >> 3;
 }
 
 static int touch_down(void)
 {
-    if (gpio_get_level(PIN_TOUCH_IRQ) != 0) {
-        return 0;
+    if (!s_touch) {
+        return gpio_get_level(PIN_TOUCH_IRQ) == 0;
     }
-    int z1 = xpt_sample(0xB1);
-    int z2 = xpt_sample(0xC1);
-    int pressure = z1 + 4095 - z2;
-    return pressure > 400;
+    /* 0xB1 reads Z1. 0x80 powers the ADC down afterwards. Without that
+     * trailing command the XPT2046 leaves PENIRQ disabled, so the first
+     * sample is the last one the saver ever sees. */
+    int z = xpt_sample(0xB1);
+    xpt_sample(0x80);
+    if (z < 0) {
+        return gpio_get_level(PIN_TOUCH_IRQ) == 0;
+    }
+    return z > 200 && z < 4000;
 }
 
 static void flush_band(const uint16_t *src, int y, int rows)
@@ -241,21 +246,19 @@ static void display_task(void *arg)
 {
     (void)arg;
     int64_t idle_since = esp_timer_get_time();
-    int was_down = 0;
     int frame = 0;
 
     while (1) {
         maybe_sntp();
-        int down = touch_down();
-        if (down && !was_down) {
+        if (touch_down()) {
             idle_since = esp_timer_get_time();
         }
-        was_down = down;
 
         cyd_scene_t scene;
         memset(&scene, 0, sizeof scene);
         scene.temp_c = 26;
         scene.humidity = 62;
+        snprintf(scene.place, sizeof scene.place, "Casa");
         scene.tail = frame / 2;
         scene.blink = ((frame % 16) >= 14);
         fill_time(&scene);
@@ -276,7 +279,13 @@ static void display_task(void *arg)
 
         present(&scene);
         frame++;
-        vTaskDelay(pdMS_TO_TICKS(250));
+        /* Sample through the gap between frames so a short tap still lands. */
+        for (int i = 0; i < 5; i++) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            if (touch_down()) {
+                idle_since = esp_timer_get_time();
+            }
+        }
     }
 }
 

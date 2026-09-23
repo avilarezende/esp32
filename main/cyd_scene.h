@@ -22,6 +22,7 @@ typedef struct {
     int humidity;
     int blink;
     int tail;   /* 0..5, shifts the tail */
+    char place[16];
     char ip[20];
 } cyd_scene_t;
 

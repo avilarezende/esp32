@@ -103,6 +103,84 @@ static void fill_disc(canvas_t *c, int cx, int cy, int r, uint16_t color)
     }
 }
 
+static void fill_ellipse(canvas_t *c, int cx, int cy, int rx, int ry, uint16_t color)
+{
+    if (rx < 1 || ry < 1) {
+        return;
+    }
+    int y1 = cy - ry;
+    int y2 = cy + ry;
+    if (y1 < c->y0) {
+        y1 = c->y0;
+    }
+    if (y2 >= c->y0 + c->bh) {
+        y2 = c->y0 + c->bh - 1;
+    }
+    if (y2 >= CYD_H) {
+        y2 = CYD_H - 1;
+    }
+    int rx2 = rx * rx;
+    int ry2 = ry * ry;
+    for (int y = y1; y <= y2; y++) {
+        int dy = y - cy;
+        int span = rx2 * (ry2 - dy * dy);
+        if (span < 0) {
+            continue;
+        }
+        int dx = 0;
+        while ((dx + 1) * (dx + 1) * ry2 <= span) {
+            dx++;
+        }
+        int x1 = cx - dx;
+        int x2 = cx + dx;
+        if (x1 < 0) {
+            x1 = 0;
+        }
+        if (x2 >= CYD_W) {
+            x2 = CYD_W - 1;
+        }
+        uint16_t *row = c->band + (y - c->y0) * CYD_W;
+        for (int x = x1; x <= x2; x++) {
+            row[x] = color;
+        }
+    }
+}
+
+static void plot(canvas_t *c, int x, int y, uint16_t color)
+{
+    fill_rect(c, x, y, 1, 1, color);
+}
+
+static void line(canvas_t *c, int x0, int y0, int x1, int y1, uint16_t color)
+{
+    int dx = x1 - x0;
+    int dy = y1 - y0;
+    if (dx < 0) {
+        dx = -dx;
+    }
+    if (dy < 0) {
+        dy = -dy;
+    }
+    int sx = x0 < x1 ? 1 : -1;
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx - dy;
+    for (;;) {
+        plot(c, x0, y0, color);
+        if (x0 == x1 && y0 == y1) {
+            break;
+        }
+        int e2 = err * 2;
+        if (e2 > -dy) {
+            err -= dy;
+            x0 += sx;
+        }
+        if (e2 < dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
 static void fill_tri(canvas_t *c, int x0, int y0, int x1, int y1, int x2, int y2, uint16_t color)
 {
     int ys[3] = {y0, y1, y2};
@@ -260,34 +338,110 @@ static void clock_row(canvas_t *c, int y, int w, int h, int t, int gap, const ch
     }
 }
 
-static void kitten(canvas_t *c, int ox, int oy, int blink, int tail)
+/* Map a point from the web kitten's 160x140 viewBox. */
+static int sc(int v, int n, int d)
 {
-    int sway = (tail % 3) - 1;
-    fill_disc(c, ox + 16 + sway * 4, oy + 18, 7, c->black);
-    fill_disc(c, ox + 22 + sway * 3, oy + 30, 7, c->orange);
-    fill_disc(c, ox + 28 + sway * 2, oy + 40, 8, c->cream);
-    fill_disc(c, ox + 50, oy + 52, 20, c->cream);
-    fill_disc(c, ox + 38, oy + 50, 9, c->orange);
-    fill_disc(c, ox + 62, oy + 46, 8, c->black);
-    fill_disc(c, ox + 40, oy + 68, 7, c->cream);
-    fill_disc(c, ox + 60, oy + 68, 7, c->cream);
-    fill_tri(c, ox + 30, oy + 28, ox + 18, oy + 4, ox + 46, oy + 22, c->black);
-    fill_tri(c, ox + 70, oy + 28, ox + 84, oy + 2, ox + 54, oy + 22, c->orange);
-    fill_disc(c, ox + 50, oy + 32, 18, c->cream);
-    fill_disc(c, ox + 28, oy + 16, 6, c->pink);
-    fill_disc(c, ox + 74, oy + 14, 6, c->pink);
-    fill_disc(c, ox + 38, oy + 26, 8, c->black);
-    fill_disc(c, ox + 64, oy + 40, 7, c->orange);
-    if (blink) {
-        fill_rect(c, ox + 40, oy + 34, 8, 2, c->black);
-        fill_rect(c, ox + 54, oy + 34, 8, 2, c->black);
-    } else {
-        fill_disc(c, ox + 43, oy + 34, 3, c->black);
-        fill_disc(c, ox + 57, oy + 34, 3, c->black);
-        fill_rect(c, ox + 44, oy + 32, 2, 2, c->white);
-        fill_rect(c, ox + 58, oy + 32, 2, 2, c->white);
+    return v * n / d;
+}
+
+static void cubic(int x0, int y0, int x1, int y1, int x2, int y2, int x3, int y3,
+                  int i, int steps, int *xo, int *yo)
+{
+    int t = (i * 32) / steps;
+    int u = 32 - t;
+    int u2 = u * u;
+    int t2 = t * t;
+    int den = 32 * 32 * 32;
+    *xo = (u2 * u * x0 + 3 * u2 * t * x1 + 3 * u * t2 * x2 + t2 * t * x3) / den;
+    *yo = (u2 * u * y0 + 3 * u2 * t * y1 + 3 * u * t2 * y2 + t2 * t * y3) / den;
+}
+
+static void stroke_cubic(canvas_t *c, int ox, int oy, int n, int d,
+                         int x0, int y0, int x1, int y1, int x2, int y2, int x3, int y3,
+                         int radius, uint16_t color)
+{
+    int steps = 10;
+    int r = sc(radius, n, d);
+    if (r < 1) {
+        r = 1;
     }
-    fill_disc(c, ox + 50, oy + 40, 2, c->pink);
+    for (int i = 0; i <= steps; i++) {
+        int x;
+        int y;
+        cubic(x0, y0, x1, y1, x2, y2, x3, y3, i, steps, &x, &y);
+        fill_disc(c, ox + sc(x, n, d), oy + sc(y, n, d), r, color);
+    }
+}
+
+static void ell(canvas_t *c, int ox, int oy, int n, int d,
+                int cx, int cy, int rx, int ry, uint16_t color)
+{
+    int erx = sc(rx, n, d);
+    int ery = sc(ry, n, d);
+    if (erx < 1) {
+        erx = 1;
+    }
+    if (ery < 1) {
+        ery = 1;
+    }
+    fill_ellipse(c, ox + sc(cx, n, d), oy + sc(cy, n, d), erx, ery, color);
+}
+
+static void tri(canvas_t *c, int ox, int oy, int n, int d,
+                int x0, int y0, int x1, int y1, int x2, int y2, uint16_t color)
+{
+    fill_tri(c,
+             ox + sc(x0, n, d), oy + sc(y0, n, d),
+             ox + sc(x1, n, d), oy + sc(y1, n, d),
+             ox + sc(x2, n, d), oy + sc(y2, n, d),
+             color);
+}
+
+static void kitten(canvas_t *c, int ox, int oy, int n, int d, int blink, int tail)
+{
+    /* Same shapes as the web SVG (viewBox 160x140): cream body, black cap
+     * and left ear, orange right ear and cheek, pink inner ears. */
+    int sway = (tail % 5) - 2;
+    stroke_cubic(c, ox, oy, n, d, 48, 108, 18, 104, 12, 72, 30 + sway * 4, 56, 8, c->cream);
+    stroke_cubic(c, ox, oy, n, d, 44, 104, 22, 98, 18, 76, 32 + sway * 3, 64, 4, c->orange);
+    stroke_cubic(c, ox, oy, n, d, 33, 66, 28, 56, 32, 48, 40 + sway * 2, 46, 4, c->black);
+    ell(c, ox, oy, n, d, 92, 108, 38, 24, c->cream);
+    ell(c, ox, oy, n, d, 72, 104, 16, 13, c->orange);
+    ell(c, ox, oy, n, d, 114, 98, 14, 12, c->black);
+    ell(c, ox, oy, n, d, 76, 126, 11, 7, c->cream);
+    ell(c, ox, oy, n, d, 106, 126, 11, 7, c->cream);
+    tri(c, ox, oy, n, d, 62, 58, 46, 16, 84, 46, c->black);
+    tri(c, ox, oy, n, d, 64, 52, 54, 28, 76, 46, c->pink);
+    tri(c, ox, oy, n, d, 122, 58, 140, 16, 102, 46, c->orange);
+    tri(c, ox, oy, n, d, 120, 52, 130, 28, 108, 46, c->pink);
+    ell(c, ox, oy, n, d, 92, 72, 32, 32, c->cream);
+    ell(c, ox, oy, n, d, 80, 44, 22, 14, c->black);
+    ell(c, ox, oy, n, d, 118, 98, 16, 12, c->orange);
+    if (blink) {
+        int y = oy + sc(76, n, d);
+        int h = sc(3, n, d);
+        if (h < 2) {
+            h = 2;
+        }
+        fill_rect(c, ox + sc(71, n, d), y, sc(14, n, d), h, c->black);
+        fill_rect(c, ox + sc(101, n, d), y, sc(14, n, d), h, c->black);
+    } else {
+        ell(c, ox, oy, n, d, 78, 76, 7, 8, c->black);
+        ell(c, ox, oy, n, d, 108, 76, 7, 8, c->black);
+        ell(c, ox, oy, n, d, 80, 73, 2, 3, c->white);
+        ell(c, ox, oy, n, d, 110, 73, 2, 3, c->white);
+    }
+    ell(c, ox, oy, n, d, 93, 86, 4, 3, c->pink);
+    line(c,
+         ox + sc(85, n, d), oy + sc(92, n, d),
+         ox + sc(93, n, d), oy + sc(97, n, d), c->black);
+    line(c,
+         ox + sc(93, n, d), oy + sc(97, n, d),
+         ox + sc(101, n, d), oy + sc(92, n, d), c->black);
+    line(c, ox + sc(68, n, d), oy + sc(82, n, d), ox + sc(46, n, d), oy + sc(76, n, d), c->black);
+    line(c, ox + sc(68, n, d), oy + sc(88, n, d), ox + sc(46, n, d), oy + sc(90, n, d), c->black);
+    line(c, ox + sc(116, n, d), oy + sc(82, n, d), ox + sc(138, n, d), oy + sc(76, n, d), c->black);
+    line(c, ox + sc(116, n, d), oy + sc(88, n, d), ox + sc(138, n, d), oy + sc(90, n, d), c->black);
 }
 
 static void paint_portal(canvas_t *c)
@@ -379,14 +533,18 @@ static void paint_saver(canvas_t *c, const cyd_scene_t *scene)
     } else {
         memcpy(hhmm, "--:--", 6);
     }
-    clock_row(c, 8, 46, 78, 8, 6, hhmm, c->white);
+    clock_row(c, 2, 34, 56, 6, 4, hhmm, c->white);
     if (scene->time_valid) {
         char date[20];
         date_line(scene, date, sizeof date);
-        text_center(c, 96, 2, date, c->muted);
+        text_center(c, 62, 1, date, c->muted);
     }
-    weather_pair(c, 104, 120, 2, scene->temp_c, scene->humidity);
-    kitten(c, 118, 140, 1, scene->tail);
+    if (scene->place[0]) {
+        text_center(c, 74, 2, scene->place, c->warm);
+    }
+    weather_pair(c, 96, 96, 2, scene->temp_c, scene->humidity);
+    /* 2/3 of the web viewBox: about 107x93, same patches as the SVG. */
+    kitten(c, 106, 118, 2, 3, 1, scene->tail);
     text_center(c, 224, 1, "toque na tela", c->muted);
 }
 
@@ -405,8 +563,8 @@ static void paint_awake(canvas_t *c, const cyd_scene_t *scene)
     }
     text(c, 8, 8, 2, hhmm, c->white);
     weather_pair(c, 168, 8, 2, scene->temp_c, scene->humidity);
-    kitten(c, 112, 36, scene->blink, scene->tail);
-    text_center(c, 150, 2, "Gatinho", c->warm);
+    kitten(c, 24, 40, 1, 2, scene->blink, scene->tail);
+    text_center(c, 116, 2, "Gatinho", c->warm);
     if (scene->ip[0]) {
         text_center(c, 178, 2, scene->ip, c->cool);
     }
