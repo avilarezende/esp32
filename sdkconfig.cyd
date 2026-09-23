@@ -4,3 +4,5 @@
 #   idf.py -B build_cyd -p /dev/ttyUSB0 flash monitor
 CONFIG_APP_ENABLE_WIFI_RADIO=y
 CONFIG_APP_ENABLE_CYD=y
+# The OpenCores MAC exists only in QEMU. ESP-IDF 6 no longer ships its PHY.
+CONFIG_ETH_USE_OPENETH=n
