@@ -7,7 +7,8 @@ idf_component_register(SRCS "main.c"
                             "cyd_display.c"
                        INCLUDE_DIRS "."
                        EMBED_TXTFILES "app.html"
-                       REQUIRES esp_wifi
+                       REQUIRES spi_flash
+                                esp_wifi
                                 esp_lcd
                                 esp_lcd_ili9341
                                 driver

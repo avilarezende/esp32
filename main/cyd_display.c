@@ -16,6 +16,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_ili9341.h"
 #include "esp_heap_caps.h"
+#include "esp_idf_version.h"
 #include "esp_log.h"
 #include "esp_netif_sntp.h"
 #include "esp_timer.h"
@@ -165,7 +166,11 @@ static esp_err_t panel_bringup(void)
 
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = -1,
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
+#else
         .rgb_endian = LCD_RGB_ENDIAN_BGR,
+#endif
         .bits_per_pixel = 16,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_ili9341(io, &panel_cfg, &s_panel));
