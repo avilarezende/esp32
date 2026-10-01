@@ -30,6 +30,15 @@ esp_err_t assistant_set_hub(bool enabled, const char *type, const char *addr,
 /* Choose the principal bot shown with the animated avatar. */
 esp_err_t assistant_set_principal_bot(const char *bot_id);
 
+/* True when a hub was saved with a non-empty address. */
+bool assistant_hub_configured(void);
+
+/* Copy the saved hub fields (empty strings when unset). */
+void assistant_get_hub(char *type, size_t type_len,
+                       char *addr, size_t addr_len,
+                       char *user, size_t user_len,
+                       char *pass, size_t pass_len);
+
 /* JSON builders (each always writes a valid JSON document). */
 void assistant_state_json(char *buf, size_t buf_len);
 void assistant_bots_json(char *buf, size_t buf_len);

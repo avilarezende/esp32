@@ -98,13 +98,20 @@ App endpoints: `GET /state`, `GET /bots`, `GET /devices`, `GET /hub/discover`,
 ## Cheap Yellow Display (ESP32-2432S028)
 
 The 2.8" yellow board (ILI9341 + XPT2046) draws the UI on its own panel:
-landscape 320×240, with the clock, temperature, humidity and the calico kitten.
-Touch wakes the screen. After 30 seconds idle it returns to the large clock.
+landscape 320×240. After the station joins Wi-Fi it polls a Home Assistant on
+the LAN (`/api/states`, Bearer token from the hub password field) and shows an
+observation view: place, temperature, humidity and a short device list. After
+30 seconds idle the large clock saver takes over; after **40 minutes** without
+touch the backlight turns off. Touch wakes the panel.
+
 Until the station has an IP, the panel shows the setup portal instead:
 
 1. On the phone, join Wi-Fi `ESP32-Setup` / password `esp32setup`.
-2. Open `http://192.168.4.1` and save the home network.
-3. The board reboots, syncs the clock from NTP (Brasília, UTC−3) and shows the saver.
+2. Open `http://192.168.4.1`, save the home network, and in onboarding pick
+   Home Assistant with address `host:8123` and a long-lived access token as
+   the password.
+3. The board reboots, syncs the clock from NTP (Brasília, UTC−3), fetches HA
+   and shows the observation view.
 
 ```bash
 idf.py -B build_cyd -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
@@ -191,8 +198,9 @@ natively with `gcc` + Unity — no hardware or emulator required:
 │   ├── main.c              # app_main: chip info + wifi_manager bring-up
 │   ├── wifi_manager.[ch]   # STA-from-NVS, reconnection, SoftAP provisioning, NVS
 │   ├── app.html            # touch UI: chat, devices, settings, idle clock saver
-│   ├── cyd_scene.[ch]      # 320×240 panel drawing (clock, weather, kitten)
+│   ├── cyd_scene.[ch]      # 320×240 panel drawing (clock, HA view, kitten)
 │   ├── cyd_display.[ch]    # ILI9341 + XPT2046 bring-up for the 2.8" CYD
+│   ├── ha_client.[ch]      # polls Home Assistant /api/states on the LAN
 │   ├── http_server.[ch]    # portal + assistant routes; embeds app.html
 │   ├── assistant.[ch]      # hub/bot config in NVS + mock chat/devices/weather
 │   └── qemu_eth.[ch]       # emulated OpenCores Ethernet bring-up (QEMU only)

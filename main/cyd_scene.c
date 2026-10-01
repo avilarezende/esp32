@@ -636,7 +636,7 @@ static void paint_saver(canvas_t *c, const cyd_scene_t *scene)
     text_center(c, 224, 1, "toque na tela", c->muted);
 }
 
-static void paint_awake(canvas_t *c, const cyd_scene_t *scene)
+static void paint_home(canvas_t *c, const cyd_scene_t *scene)
 {
     char hhmm[6];
     if (scene->time_valid) {
@@ -649,14 +649,81 @@ static void paint_awake(canvas_t *c, const cyd_scene_t *scene)
     } else {
         memcpy(hhmm, "--:--", 6);
     }
-    clock_at(c, 8, 6, 20, hhmm, c->white);
-    weather_pair(c, 168, 8, 2, scene->temp_c, scene->humidity);
-    kitten(c, 24, 40, 1, 2, scene->blink, scene->tail);
-    text_center(c, 116, 2, "Calico", c->warm);
-    if (scene->ip[0]) {
-        text_center(c, 178, 2, scene->ip, c->cool);
+    clock_at(c, 8, 4, 22, hhmm, c->white);
+    if (scene->status[0]) {
+        int sw = text_px(scene->status, 1);
+        text(c, CYD_W - sw - 8, 8, 1, scene->status, c->cool);
     }
-    text_center(c, 214, 1, "sem toque, volta o relogio", c->muted);
+
+    const char *place = scene->place[0] ? scene->place : "Casa";
+    text(c, 8, 32, 2, place, c->warm);
+
+    if (scene->has_temp || scene->has_humidity) {
+        char left[8] = "--c";
+        char right[8] = "--%";
+        if (scene->has_temp) {
+            weather_text(left, right, scene->temp_c, scene->has_humidity ? scene->humidity : 0);
+            if (!scene->has_humidity) {
+                right[0] = '-';
+                right[1] = '-';
+                right[2] = '%';
+                right[3] = '\0';
+            }
+        } else if (scene->has_humidity) {
+            weather_text(left, right, 0, scene->humidity);
+            left[0] = '-';
+            left[1] = '-';
+            left[2] = 'c';
+            left[3] = '\0';
+        }
+        text(c, 8, 56, 2, left, c->warm);
+        text(c, 100, 56, 2, right, c->cool);
+    } else {
+        text(c, 8, 56, 1, "clima indisponivel", c->muted);
+    }
+
+    fill_rect(c, 8, 80, CYD_W - 16, 1, c->muted);
+
+    if (scene->row_count <= 0) {
+        if (strcmp(scene->status, "sem hub") == 0) {
+            text_center(c, 110, 1, "configure o Home Assistant", c->muted);
+            text_center(c, 128, 1, "no celular (portal / Ajustes)", c->muted);
+        } else if (strcmp(scene->status, "offline") == 0 ||
+                   strcmp(scene->status, "token ruim") == 0 ||
+                   strcmp(scene->status, "sem token") == 0) {
+            text_center(c, 110, 1, "nao foi possivel ler o HA", c->muted);
+            text_center(c, 128, 1, "confira endereco e token", c->muted);
+        } else {
+            text_center(c, 110, 1, "buscando dispositivos...", c->muted);
+        }
+        kitten(c, 112, 148, 1, 2, scene->blink, scene->tail);
+    } else {
+        for (int i = 0; i < scene->row_count && i < CYD_ROW_MAX; i++) {
+            int y = 88 + i * 28;
+            const cyd_row_t *r = &scene->rows[i];
+            uint16_t name_c = c->white;
+            uint16_t det_c = c->muted;
+            if (r->on == 1) {
+                det_c = c->warm;
+            } else if (r->on == 0) {
+                det_c = c->muted;
+            } else {
+                det_c = c->cool;
+            }
+            text(c, 8, y, 1, r->name, name_c);
+            int dw = text_px(r->detail, 1);
+            text(c, CYD_W - dw - 8, y, 1, r->detail, det_c);
+        }
+    }
+
+    text_center(c, 224, 1, "40 min sem toque: tela off", c->muted);
+}
+
+static void paint_sleep(canvas_t *c)
+{
+    for (int i = 0; i < c->bh * CYD_W; i++) {
+        c->band[i] = 0;
+    }
 }
 
 void cyd_scene_paint(uint16_t *band, int y0, int band_h, const cyd_scene_t *scene)
@@ -675,12 +742,16 @@ void cyd_scene_paint(uint16_t *band, int y0, int band_h, const cyd_scene_t *scen
         .cool = rgb565(125, 211, 252),
         .muted = rgb565(182, 196, 214),
     };
+    if (scene->mode == CYD_UI_SLEEP) {
+        paint_sleep(&c);
+        return;
+    }
     clear_band(&c);
     if (scene->mode == CYD_UI_PORTAL) {
         paint_portal(&c);
     } else if (scene->mode == CYD_UI_SAVER) {
         paint_saver(&c, scene);
     } else {
-        paint_awake(&c, scene);
+        paint_home(&c, scene);
     }
 }

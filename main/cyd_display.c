@@ -21,6 +21,7 @@
 #include "esp_timer.h"
 
 #include "cyd_scene.h"
+#include "ha_client.h"
 #include "wifi_manager.h"
 
 static const char *TAG = "cyd";
@@ -40,11 +41,13 @@ static const char *TAG = "cyd";
 #define LCD_HOST   SPI2_HOST
 #define TOUCH_HOST SPI3_HOST
 #define BAND_H     20
-#define IDLE_MS    30000
+#define SAVER_MS   30000LL
+#define SLEEP_MS   (40LL * 60LL * 1000LL)
 
 static esp_lcd_panel_handle_t s_panel;
 static spi_device_handle_t s_touch;
 static int s_sntp_started;
+static int s_screen_on = 1;
 
 /* DRAM, not the heap. On ESP-IDF 6, MALLOC_CAP_INTERNAL can return 32-bit
  * IRAM; a uint16 store there is a LoadStoreError and reboots the chip. */
@@ -112,6 +115,44 @@ static void fill_time(cyd_scene_t *scene)
     scene->wday = tm.tm_wday;
     scene->mday = tm.tm_mday;
     scene->month = tm.tm_mon;
+}
+
+static void set_screen(int on)
+{
+    if (on == s_screen_on) {
+        return;
+    }
+    s_screen_on = on;
+    if (s_panel) {
+        esp_lcd_panel_disp_on_off(s_panel, on);
+    }
+    gpio_set_level(PIN_LCD_BL, on ? 1 : 0);
+    ESP_LOGI(TAG, "panel %s", on ? "on" : "sleep");
+}
+
+static void fill_from_ha(cyd_scene_t *scene)
+{
+    ha_snapshot_t ha;
+    ha_client_copy(&ha);
+    snprintf(scene->place, sizeof scene->place, "%s", ha.place[0] ? ha.place : "Casa");
+    snprintf(scene->status, sizeof scene->status, "%s", ha.status);
+    if (ha.has_temp) {
+        scene->temp_c = ha.temp_c;
+        scene->has_temp = 1;
+    }
+    if (ha.has_humidity) {
+        scene->humidity = ha.humidity;
+        scene->has_humidity = 1;
+    }
+    scene->row_count = ha.device_count;
+    if (scene->row_count > CYD_ROW_MAX) {
+        scene->row_count = CYD_ROW_MAX;
+    }
+    for (int i = 0; i < scene->row_count; i++) {
+        snprintf(scene->rows[i].name, sizeof scene->rows[i].name, "%s", ha.devices[i].name);
+        snprintf(scene->rows[i].detail, sizeof scene->rows[i].detail, "%s", ha.devices[i].detail);
+        scene->rows[i].on = ha.devices[i].on;
+    }
 }
 
 static void maybe_sntp(void)
@@ -247,43 +288,83 @@ static void display_task(void *arg)
     (void)arg;
     int64_t idle_since = esp_timer_get_time();
     int frame = 0;
+    int last_mode = -1;
 
     while (1) {
         maybe_sntp();
         if (touch_down()) {
             idle_since = esp_timer_get_time();
+            if (!s_screen_on) {
+                set_screen(1);
+            }
         }
 
+        int64_t idle_ms = (esp_timer_get_time() - idle_since) / 1000;
         cyd_scene_t scene;
         memset(&scene, 0, sizeof scene);
-        scene.temp_c = 26;
-        scene.humidity = 62;
-        snprintf(scene.place, sizeof scene.place, "Casa");
         scene.tail = frame / 2;
         scene.blink = ((frame % 16) >= 14);
         fill_time(&scene);
+        fill_from_ha(&scene);
+        if (!scene.has_temp && !scene.has_humidity && scene.row_count == 0 &&
+            strcmp(scene.status, "HA ok") != 0) {
+            /* Keep the glanceable numbers until HA answers. */
+            scene.temp_c = 26;
+            scene.humidity = 62;
+            scene.has_temp = 0;
+            scene.has_humidity = 0;
+        }
         const char *ip = wifi_manager_get_ip();
         if (ip) {
             snprintf(scene.ip, sizeof scene.ip, "%s", ip);
         }
 
-        int64_t idle_ms = (esp_timer_get_time() - idle_since) / 1000;
         if (!wifi_manager_is_connected()) {
             scene.mode = CYD_UI_PORTAL;
-        } else if (idle_ms >= IDLE_MS) {
+            if (!s_screen_on) {
+                set_screen(1);
+            }
+        } else if (idle_ms >= SLEEP_MS) {
+            scene.mode = CYD_UI_SLEEP;
+            set_screen(0);
+        } else if (idle_ms >= SAVER_MS) {
             scene.mode = CYD_UI_SAVER;
             scene.blink = 1;
+            if (!scene.has_temp) {
+                scene.temp_c = 26;
+            }
+            if (!scene.has_humidity) {
+                scene.humidity = 62;
+            }
+            if (!s_screen_on) {
+                set_screen(1);
+            }
         } else {
-            scene.mode = CYD_UI_AWAKE;
+            scene.mode = CYD_UI_HOME;
+            if (!s_screen_on) {
+                set_screen(1);
+            }
         }
 
-        present(&scene);
+        if (scene.mode == CYD_UI_SLEEP) {
+            if (last_mode != CYD_UI_SLEEP) {
+                present(&scene);
+                last_mode = CYD_UI_SLEEP;
+            }
+        } else {
+            present(&scene);
+            last_mode = scene.mode;
+        }
         frame++;
-        /* Sample through the gap between frames so a short tap still lands. */
-        for (int i = 0; i < 5; i++) {
+
+        int samples = (scene.mode == CYD_UI_SLEEP) ? 10 : 5;
+        for (int i = 0; i < samples; i++) {
             vTaskDelay(pdMS_TO_TICKS(50));
             if (touch_down()) {
                 idle_since = esp_timer_get_time();
+                if (!s_screen_on) {
+                    set_screen(1);
+                }
             }
         }
     }
@@ -294,6 +375,9 @@ esp_err_t cyd_display_start(void)
     esp_err_t err = panel_bringup();
     if (err != ESP_OK) {
         return err;
+    }
+    if (ha_client_start() != ESP_OK) {
+        ESP_LOGW(TAG, "Home Assistant poller did not start");
     }
     if (xTaskCreate(display_task, "cyd", 8192, NULL, 1, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;

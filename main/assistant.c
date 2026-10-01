@@ -94,6 +94,32 @@ esp_err_t assistant_set_principal_bot(const char *bot_id)
     return err;
 }
 
+bool assistant_hub_configured(void)
+{
+    char addr[ASSISTANT_STR_MAX] = {0};
+    get_str(K_HUB_ADDR, addr, sizeof(addr));
+    return get_u8(K_HUB_EN, 0) != 0 && addr[0] != '\0';
+}
+
+void assistant_get_hub(char *type, size_t type_len,
+                       char *addr, size_t addr_len,
+                       char *user, size_t user_len,
+                       char *pass, size_t pass_len)
+{
+    if (type && type_len) {
+        get_str(K_HUB_TYPE, type, type_len);
+    }
+    if (addr && addr_len) {
+        get_str(K_HUB_ADDR, addr, addr_len);
+    }
+    if (user && user_len) {
+        get_str(K_HUB_USER, user, user_len);
+    }
+    if (pass && pass_len) {
+        get_str(K_HUB_PASS, pass, pass_len);
+    }
+}
+
 static const char *bot_name(const char *id)
 {
     for (size_t i = 0; i < BOT_COUNT; i++) {
