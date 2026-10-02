@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks (secret scanning)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  validate-secrets-template:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Garantir que secrets.h nunca é versionado
+        run: |
+          if git ls-files --error-unmatch src/secrets.h 2>/dev/null; then
+            echo "ERRO: src/secrets.h está versionado no repositório!"
+            exit 1
+          fi
+          echo "OK: src/secrets.h não está versionado."
+          test -f .gitignore && grep -q "src/secrets.h" .gitignore
