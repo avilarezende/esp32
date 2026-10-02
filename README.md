@@ -1,7 +1,23 @@
 # esp32
 
-Starter firmware for the [ESP32](https://www.espressif.com/en/products/socs/esp32)
-built with [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/v5.3.2/esp32/index.html).
+Firmware for the [ESP32](https://www.espressif.com/en/products/socs/esp32)
+(ESP-IDF) with a SoftAP setup portal, a touch web app, and a native UI on the
+**Cheap Yellow Display 2.8"** that observes a local Home Assistant.
+
+### Documentação (pt-BR)
+
+| Documento | Conteúdo |
+|-----------|----------|
+| [docs/GUIA.md](docs/GUIA.md) | Telas, Home Assistant, tempos — com imagens |
+| [docs/INSTALACAO.md](docs/INSTALACAO.md) | Como instalar o ESP-IDF e gravar no CYD |
+| [release/cyd/](release/cyd/) | **Cópia pronta**: binários + `flash.bat` / `flash.sh` |
+
+Gravação rápida (Windows, PowerShell do ESP-IDF):
+
+```bat
+cd release\cyd
+flash.bat COM3
+```
 
 On boot the device connects to the Wi-Fi network whose credentials are stored
 in NVS. When no credentials are stored (first boot) or the connection fails, it
@@ -183,9 +199,12 @@ natively with `gcc` + Unity — no hardware or emulator required:
 ```
 .
 ├── CMakeLists.txt          # top-level ESP-IDF project file
-├── sdkconfig.defaults      # target (esp32), flash size, HTTP header limit, openeth
+├── sdkconfig.defaults      # target (esp32), flash size, HTTP header limit
 ├── sdkconfig.cyd           # 2.8" CYD overlay: onboard ILI9341 + touch
-├── sdkconfig.qemu          # QEMU overlay: disables the Wi-Fi radio and the panel
+├── sdkconfig.qemu          # QEMU overlay: disables Wi-Fi radio and panel
+├── docs/                   # pt-BR guide + install steps + panel screenshots
+├── release/cyd/            # prebuilt binaries + flash.bat / flash.sh
+├── scripts/pack-release-cyd.sh
 ├── components/
 │   ├── esp_lcd_ili9341/    # vendored ILI9341 panel driver (Apache-2.0)
 │   └── wifi_form/          # pure, host-testable form parsing + validation
@@ -194,16 +213,16 @@ natively with `gcc` + Unity — no hardware or emulator required:
 │   └── test_wifi_form.c    # Unity test cases
 ├── main/
 │   ├── CMakeLists.txt      # component registration + dependencies
-│   ├── Kconfig.projbuild   # APP_ENABLE_WIFI_RADIO option
+│   ├── Kconfig.projbuild   # APP_ENABLE_WIFI_RADIO / APP_ENABLE_CYD
 │   ├── main.c              # app_main: chip info + wifi_manager bring-up
-│   ├── wifi_manager.[ch]   # STA-from-NVS, reconnection, SoftAP provisioning, NVS
-│   ├── app.html            # touch UI: chat, devices, settings, idle clock saver
-│   ├── cyd_scene.[ch]      # 320×240 panel drawing (clock, HA view, kitten)
-│   ├── cyd_display.[ch]    # ILI9341 + XPT2046 bring-up for the 2.8" CYD
+│   ├── wifi_manager.[ch]   # STA-from-NVS, SoftAP provisioning, NVS
+│   ├── app.html            # touch UI: chat, devices, settings, idle clock
+│   ├── cyd_scene.[ch]      # 320×240 panel drawing (HA view, clock, kitten)
+│   ├── cyd_display.[ch]    # ILI9341 + XPT2046 + 40 min sleep
 │   ├── ha_client.[ch]      # polls Home Assistant /api/states on the LAN
 │   ├── http_server.[ch]    # portal + assistant routes; embeds app.html
-│   ├── assistant.[ch]      # hub/bot config in NVS + mock chat/devices/weather
-│   └── qemu_eth.[ch]       # emulated OpenCores Ethernet bring-up (QEMU only)
+│   ├── assistant.[ch]      # hub/bot config in NVS + mock chat/devices
+│   └── qemu_eth.[ch]       # emulated OpenCores Ethernet (QEMU only)
 └── .cursor/
     ├── environment.json    # Cloud Agent environment definition
     └── install.sh          # idempotent toolchain + QEMU bootstrap
