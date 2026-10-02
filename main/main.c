@@ -21,6 +21,7 @@
 #include "esp_system.h"
 #include "nvs_flash.h"
 
+#include "cyd_display.h"
 #include "wifi_manager.h"
 
 static const char *TAG = "app";
@@ -61,6 +62,9 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
 
     ESP_ERROR_CHECK(wifi_manager_start());
+    if (cyd_display_start() != ESP_OK) {
+        ESP_LOGW(TAG, "CYD display did not start; web portal still available");
+    }
 
     for (int i = 0; ; i++) {
         if (wifi_manager_is_connected()) {

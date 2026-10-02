@@ -26,4 +26,13 @@ menu "ESP32 Wi-Fi starter"
             APIs (requires credentials configured at runtime); that proxy is not
             implemented yet, so keep this enabled for now.
 
+    config APP_ENABLE_CYD
+        bool "Drive a Cheap Yellow Display (ESP32-2432S028, 2.8 inch)"
+        default n
+        help
+            Draw the clock, weather and kitten on the board's ILI9341 panel
+            and wake it from the XPT2046 touch screen. Enable this only for the
+            yellow 2.8" CYD (320x240 landscape). The QEMU build leaves it off.
+            Build with sdkconfig.cyd.
+
 endmenu

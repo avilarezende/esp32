@@ -1,6 +1,7 @@
 # ESP-IDF build output
 /build/
 /build_qemu/
+/build_cyd/
 sdkconfig
 sdkconfig.old
 
