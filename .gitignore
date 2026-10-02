@@ -1,0 +1,22 @@
+# Credenciais — nunca versionar
+src/secrets.h
+
+# PlatformIO
+.pio/
+.vscode/.browse.VC.db*
+.vscode/.browse.VC.db-wal
+.vscode/.browse.VC.db-shm
+
+# Build / artefatos
+.pioenvs/
+.piolibdeps/
+*.bin
+*.elf
+*.hex
+
+# IDE / SO
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+Thumbs.db
