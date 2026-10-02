@@ -80,6 +80,22 @@ devices/<nome>/status      → "online" / "offline" (retido + LWT)
 devices/<nome>/command     → comandos: led:on | led:off | led:toggle
 ```
 
+## Integração contínua (CI)
+
+O repositório inclui um workflow de CI (`.github/workflows/ci.yml`) executado em
+push e pull request para `main`, com dois jobs de validação:
+
+- **`security-scan`** — faz secret scanning de todo o repositório com a
+  [action oficial do Gitleaks](https://github.com/gitleaks/gitleaks-action),
+  detectando credenciais, tokens e chaves que tenham vazado por engano.
+- **`validate-secrets-template`** — garante que `src/secrets.h` **nunca** esteja
+  versionado no git (o job falha se o arquivo estiver no controle de versão) e
+  que ele continue listado no `.gitignore`.
+
+O objetivo é funcionar como rede de segurança para a regra já documentada acima:
+mesmo com `src/secrets.h` no `.gitignore`, um `git add -f` ou um erro humano pode
+vazar credenciais reais para o histórico — o CI bloqueia isso antes do merge.
+
 ## Próximos passos sugeridos
 
 - Adicionar sensores (DHT22, DS18B20, etc.) e publicar leituras na telemetria
