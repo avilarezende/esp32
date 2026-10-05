@@ -21,6 +21,7 @@ def ensure_secrets_h(*_args, **_kwargs):
             print("[prebuild] AVISO: secrets.example.h não encontrado.")
             return
         shutil.copyfile(EXAMPLE, TARGET)
+        os.chmod(TARGET, 0o600)
         print("[prebuild] secrets.h criado a partir do template.")
         print(
             "[prebuild] ATENÇÃO: preencha WIFI_SSID, WIFI_PASSWORD e o MQTT "
@@ -31,5 +32,6 @@ def ensure_secrets_h(*_args, **_kwargs):
 
 
 # Roda antes de cada build e antes do upload
-env.AddPreAction("buildprog", ensure_secrets_h)
+# The header is needed while compiling main.cpp, before buildprog actions run.
+ensure_secrets_h()
 env.AddPreAction("upload", ensure_secrets_h)

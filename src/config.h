@@ -8,6 +8,12 @@
 
 #pragma once
 
+// Generic ESP32 DevKit boards do not always define an on-board LED pin.
+// GPIO 2 is the standard DevKit LED; board definitions can override it.
+#ifndef LED_BUILTIN
+#define LED_BUILTIN 2
+#endif
+
 // Identificação do dispositivo no broker e no OTA
 #define DEVICE_NAME          "esp32-calisto-01"
 
