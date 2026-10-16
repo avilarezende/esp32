@@ -16,9 +16,9 @@ extern "C" {
  * Assistant / smart-home layer.
  *
  * Stores the home-hub connection settings and the chosen "principal" bot in
- * NVS, and produces the JSON consumed by the web app. The chat and device data
- * come from a local mock backend when CONFIG_APP_BOT_BACKEND_MOCK is set (the
- * default), so the whole UI can be exercised without external credentials.
+ * NVS, and produces the JSON consumed by the web app. Chat, devices and
+ * weather use the Home Assistant on the LAN. Set CONFIG_APP_BOT_BACKEND_MOCK
+ * to serve the local mock instead.
  */
 
 /* True once the user has completed the first-run hub decision. */

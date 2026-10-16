@@ -179,8 +179,8 @@ void assistant_discover_json(char *buf, size_t buf_len)
     /* Mock mDNS-style discovery results. */
     strlcpy(buf,
         "["
-        "{\"name\":\"Home Assistant (sala)\",\"addr\":\"homeassistant.local:8123\"},"
-        "{\"name\":\"Hub da casa\",\"addr\":\"192.168.0.10:8123\"}"
+        "{\"name\":\"Home Assistant (porta 80)\",\"addr\":\"http://192.168.0.10\"},"
+        "{\"name\":\"Home Assistant :8123\",\"addr\":\"http://192.168.0.10:8123\"}"
         "]", buf_len);
 }
 

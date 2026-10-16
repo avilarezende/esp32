@@ -17,9 +17,9 @@ typedef struct {
     uint8_t cat;         /* cat animation */
     uint8_t clk24;       /* 24 h clock */
     uint8_t alerts;      /* show alerts banner/badge */
-    char net_url[128];
+    char net_url[128];   /* internet check URL (expects HTTP 200/204) */
     char btn_label[12];  /* quick button label */
-    uint8_t btn_icon;    /* 0 gate (portao), 1 camera */   /* internet check URL (expects HTTP 200/204) */
+    uint8_t btn_icon;    /* 0 gate (portao), 1 camera */
 } cyd_cfg_t;
 
 void cyd_cfg_load(void);
