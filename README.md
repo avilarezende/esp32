@@ -1,160 +1,141 @@
 # esp32
 
-Firmware for the [ESP32](https://www.espressif.com/en/products/socs/esp32)
-(ESP-IDF) with a SoftAP setup portal, a touch web app, and a native UI on the
-**Cheap Yellow Display 2.8"** that observes a local Home Assistant.
+Firmware ESP-IDF para o **Cheap Yellow Display 2.8"** (ESP32-2432S028) e um
+portal Wi-Fi. No boot o aparelho entra na rede salva na NVS; sem credenciais
+(ou se a conexão falha), sobe o portal `ESP32-Setup`. Com o Home Assistant na
+LAN, o painel mostra relógio, clima, dispositivos, câmera e alertas.
+
+O mesmo repositório ainda traz um [firmware de referência PlatformIO](#firmware-de-referência-platformio)
+(Wi-Fi + MQTT + OTA Arduino), independente do CYD.
 
 ### Documentação (pt-BR)
 
 | Documento | Conteúdo |
 |-----------|----------|
-| [docs/GUIA.md](docs/GUIA.md) | Telas, Home Assistant, tempos — com imagens |
-| [docs/INSTALACAO.md](docs/INSTALACAO.md) | Como instalar o ESP-IDF e gravar no CYD |
-| [release/cyd/](release/cyd/) | **Cópia pronta**: binários + `flash.bat` / `flash.sh` |
+| [docs/GUIA.md](docs/GUIA.md) | Telas, chat, câmera, alertas, ajustes e o lado Home Assistant |
+| [docs/INSTALACAO.md](docs/INSTALACAO.md) | Gravação, **último flash por cabo** e OTA |
+| [docs/homeassistant/cyd.yaml](docs/homeassistant/cyd.yaml) | Pacote `rest_command` `cyd_camera` / `cyd_alert` |
+| [CHANGELOG.md](CHANGELOG.md) | O que entrou neste firmware |
+| [release/cyd/](release/cyd/) | Binários prontos + `flash.bat` / `flash.sh` |
 
-Gravação rápida (Windows, PowerShell do ESP-IDF):
+Gravação que **preserva** Wi-Fi, token e ajustes (Windows, PowerShell do ESP-IDF):
 
 ```bat
 cd release\cyd
 flash.bat COM3
 ```
 
-On boot the device connects to the Wi-Fi network whose credentials are stored
-in NVS. When no credentials are stored (first boot) or the connection fails, it
-starts a **SoftAP configuration portal** (`ESP32-Setup`) that serves a small web
-page where you enter the network to join. The credentials are saved to NVS and
-the device reboots to connect.
+## O que o CYD faz
 
-The firmware runs on real ESP32 hardware and, for the configuration portal, can
-be exercised end to end under the ESP-IDF QEMU emulator.
+- Portal SoftAP `ESP32-Setup` / `esp32setup` e app web no celular.
+- Chat real pelo Assist do HA (`POST /api/conversation/process`). O mock local
+  fica atrás de `CONFIG_APP_BOT_BACKEND_MOCK` (desligado por padrão).
+- Leitura do HA por um `POST /api/template` pequeno, com estados de erro
+  (`sem hub`, `sem token`, `token ruim`, `offline`).
+- Token longo até **319** caracteres.
+- Campainha e botão **Porta**: snapshots JPEG no painel (`POST /camera`).
+- Até 5 linhas, no formato `entidade` ou `entidade=Rótulo` (padrão: garagens).
+- Relógio Montserrat com antialiasing, gato calico animado, splash ditherizado.
+- Inversão de cor **desligada** por padrão; ordem BGR opcional.
+- Ajustes da tela na NVS e na seção **Tela do CYD** (`GET`/`POST /config`).
+- Ícone de internet na tela de descanso.
+- Alertas do HA (`POST /alert`, `GET /alerts`), selo, lista e **LIMPAR TUDO**.
+- OTA por HTTP com duas partições e rollback (`POST /ota`).
+- `GET /touch` para depurar o toque.
 
-## Requirements
+## Requisitos
 
-- ESP-IDF **v5.3.2** and its `esp32` toolchain
-- The `qemu-xtensa` tool (bundled QEMU build shipped by Espressif) for emulation
+- ESP-IDF **v5.3.2** e a toolchain `esp32`
+- `qemu-xtensa` (QEMU da Espressif) só para emular o portal
 
-On a Cloud Agent these are installed automatically by
-[`.cursor/install.sh`](.cursor/install.sh). To set them up manually, follow the
-[ESP-IDF Get Started guide](https://docs.espressif.com/projects/esp-idf/en/v5.3.2/esp32/get-started/index.html)
-or run that script.
+No Cloud Agent isso é instalado por [`.cursor/install.sh`](.cursor/install.sh).
+Manual: [Get Started do ESP-IDF 5.3.2](https://docs.espressif.com/projects/esp-idf/en/v5.3.2/esp32/get-started/index.html).
 
-## Activate the toolchain
-
-Every shell needs the ESP-IDF environment on its `PATH`:
+## Ativar a toolchain
 
 ```bash
 . "$HOME/esp/esp-idf/export.sh"
 ```
 
-The Cloud Agent bootstrap adds this line to `~/.bashrc`, so interactive shells
-already have `idf.py` available.
+## Fluxo de Wi-Fi
 
-## Wi-Fi configuration flow
+1. No boot o aparelho lê SSID e senha na NVS.
+2. Se existirem, entra como estação e reconecta se a rede cair.
+3. Se faltarem, ou a entrada falhar, sobe o SoftAP `ESP32-Setup` e a página de configuração.
+4. O celular entra em `ESP32-Setup` (senha `esp32setup`), abre o IP do aparelho e envia a rede.
+5. As credenciais vão para a NVS e o aparelho reinicia para conectar.
 
-1. On boot the device reads the SSID/password from NVS.
-2. If present, it joins that network as a station (retrying a few times) and then
-   keeps the link up, auto-reconnecting on drops.
-3. If absent, or the join fails, it starts the `ESP32-Setup` SoftAP and serves a
-   configuration page.
-4. Connect a phone/laptop to `ESP32-Setup` (password `esp32setup`), open the
-   device's IP in a browser, pick/enter your network, and submit.
-5. The credentials are stored in NVS and the device reboots to connect.
+SSID e senha do AP estão em [`main/wifi_manager.h`](main/wifi_manager.h).
 
-The AP SSID/password are defined in [`main/wifi_manager.h`](main/wifi_manager.h).
+### Endpoints
 
-### Web endpoints
+Servidor em [`main/http_server.c`](main/http_server.c), porta **80**:
 
-The configuration server ([`main/http_server.c`](main/http_server.c)) serves:
+- `GET /` — formulário de Wi-Fi, ou o app (chat, Casa, Ajustes) quando já há rede.
+- `GET /scan` — redes próximas em JSON. No QEMU (sem rádio) devolve exemplos.
+- `POST /connect` — SSID de 1–32 caracteres e senha vazia ou de 8–63; grava na NVS e reinicia.
+- `POST /forget` — apaga o Wi-Fi salvo.
+- `GET /state`, `GET /bots`, `GET /devices`, `GET /hub/discover`, `GET /weather`
+- `POST /chat`, `POST /hub`, `POST /bot`
+- `GET /config`, `POST /config` — ajustes da tela (NVS `app_cfg`)
+- `POST /camera` — abre o visor de snapshot (exige a chave do aparelho)
+- `POST /display` — inversão, BGR e padrão de teste (exige a chave)
+- `POST /alert`, `GET /alerts` — alertas do HA (POST exige a chave)
+- `GET /touch` — última leitura do XPT2046
+- `POST /ota` — atualização HTTP (exige a chave)
 
-- `GET /` — the configuration form when not connected, or a **status page**
-  (SSID, IP, signal) with a **Forget network** button when connected.
-- `GET /scan` — JSON list of nearby networks `[{"ssid","rssi","auth"}, ...]`;
-  the config page fetches this to populate the network list (with a Rescan
-  action). Under QEMU (no radio) it returns labeled placeholder entries.
-- `POST /connect` — validates the SSID (1–32 chars) and password (empty or
-  8–63 chars), stores them in NVS, and reboots to apply.
-- `POST /forget` — clears the stored credentials and returns to provisioning.
+A chave é os **16 primeiros hex** de `SHA-256` do token longo do HA. O guia
+mostra como calculá-la e como o HA chama `/camera` e `/alert`.
 
-## Assistant app
+## App web
 
-Once connected, `/` serves a single-page web app (see
-[`main/http_server.c`](main/http_server.c) and
-[`main/assistant.c`](main/assistant.c)):
+A página ([`main/app.html`](main/app.html)) é feita para um painel pequeno
+(cerca de 320×240): alvos de 48 px, tipo de 16 px, abas embaixo e uma coluna.
+No celular ela cresce.
 
-The page ([`main/app.html`](main/app.html)) is laid out for a small touch panel
-(about 320×240, the same class of screen as a CYD): 48px targets, 16px type,
-a bottom tab bar, and a single column. It scales up on a phone.
+- **Chat** com o gatinho. As frases vão para o Assist do HA.
+- **Casa** lista as entidades configuradas na tela.
+- **Ajustes** mostra a rede e a seção **Tela do CYD** (dispositivos, câmeras,
+  brilho, cores, gato, relógio, alertas) e o envio de `esp32-ota.bin`.
+- Depois de **30 s** sem toque, o protetor cobre a página. `prefers-reduced-motion`
+  desliga a animação do gato no navegador.
 
-- **Chat** with an animated calico kitten. On a short screen the kitten sits
-  beside the thread so the keyboard row and tabs stay reachable.
-- **Casa** lists the devices the home hub/bot exposes, one large row each.
-- **Ajustes** shows connection info, the weather line, the principal-bot
-  selector, and a two-tap "Forget network" so a stray touch does not wipe Wi-Fi.
-- A **status strip** always shows the clock, temperature, and humidity.
-- After **30 seconds** without a tap or keypress, a full-screen saver takes
-  over with a large clock, the date, temperature, condition, humidity, and the
-  kitten asleep. Tap anywhere to return. `prefers-reduced-motion` turns the
-  kitten animations off.
-
-First-run **onboarding** asks whether to add a home hub (HomeKit / Home
-Assistant / MQTT), offers a mock discovery, and stores address/user/password in
-NVS. The primary action stays pinned to the bottom of the sheet. If the account
-has more than one bot, it prompts to choose the **principal bot** shown with
-the kitten.
-
-App endpoints: `GET /state`, `GET /bots`, `GET /devices`, `GET /hub/discover`,
-`GET /weather`, `POST /chat`, `POST /hub`, `POST /bot`.
-
-> The chat replies and device list come from a **local mock backend**
-> (`CONFIG_APP_BOT_BACKEND_MOCK`, default on) so the whole flow works without
-> external credentials. Wiring the real bot (e.g. xAI Grok) and home-hub APIs is
-> a follow-up: replace the mock in `assistant.c` with an HTTPS proxy that reads
-> the credentials from NVS.
+No primeiro uso o onboarding pergunta o hub. Endereço de exemplo, porta 80:
+`http://192.168.0.10`. O token longo vai no campo de senha.
 
 ## Cheap Yellow Display (ESP32-2432S028)
 
-The 2.8" yellow board (ILI9341 + XPT2046) draws the UI on its own panel:
-landscape 320×240. After the station joins Wi-Fi it polls a Home Assistant on
-the LAN (`/api/states`, Bearer token from the hub password field) and shows an
-observation view: place, temperature, humidity and a short device list. After
-30 seconds idle the large clock saver takes over; after **40 minutes** without
-touch the backlight turns off. Touch wakes the panel.
-
-Until the station has an IP, the panel shows the setup portal instead:
-
-1. On the phone, join Wi-Fi `ESP32-Setup` / password `esp32setup`.
-2. Open `http://192.168.4.1`, save the home network, and in onboarding pick
-   Home Assistant with address `host:8123` and a long-lived access token as
-   the password.
-3. The board reboots, syncs the clock from NTP (Brasília, UTC−3), fetches HA
-   and shows the observation view.
+Paisagem 320×240 (ILI9341 + XPT2046). A tabela de partições tem dois slots OTA
+de 1,94 MB. Quem já gravou uma imagem antiga precisa de **um último flash por
+cabo** ([INSTALACAO.md](docs/INSTALACAO.md)); as próximas trocas são `POST /ota`.
 
 ```bash
 idf.py -B build_cyd -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
 idf.py -B build_cyd -p /dev/ttyUSB0 flash monitor
 ```
 
-Use the serial port the board enumerates (`/dev/ttyUSB0` or `/dev/ttyACM0` on Linux,
-`/dev/cu.usbserial-*` or `/dev/cu.wchusbserial*` on macOS). This build targets the
-2.8" CYD. The 3.5" board uses a different controller and will not light this panel.
+Porta serial: `/dev/ttyUSB0` ou `/dev/ttyACM0` no Linux, `COMx` no Windows,
+`/dev/cu.usbserial-*` ou `/dev/cu.wchusbserial*` no macOS. Esta imagem é só a
+CYD **2.8"**. A placa de 3.5" usa outro controlador.
 
-## Build and flash (real hardware, no onboard display)
+Para regenerar `release/cyd/` (incluindo `firmware-cyd.bin` e `esp32-ota.bin`):
+
+```bash
+./scripts/pack-release-cyd.sh
+```
+
+## Build sem o painel
 
 ```bash
 idf.py build
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
-## Run the configuration portal under QEMU
+## Portal no QEMU
 
-QEMU does **not** emulate the ESP32 Wi-Fi radio, so a dedicated build disables
-the radio (`CONFIG_APP_ENABLE_WIFI_RADIO=n`, see
-[`sdkconfig.qemu`](sdkconfig.qemu)) and serves the *same* configuration portal
-over the emulated OpenCores Ethernet interface. This lets the web interface be
-tested end to end without hardware.
-
-Build and run the QEMU variant with host port `8080` forwarded to the device's
-port `80`:
+O QEMU não emula o rádio Wi-Fi. O build dedicado desliga o rádio
+(`CONFIG_APP_ENABLE_WIFI_RADIO=n`, ver [`sdkconfig.qemu`](sdkconfig.qemu)) e
+serve o mesmo portal pela Ethernet OpenCores.
 
 ```bash
 idf.py -B build_qemu -DSDKCONFIG=build_qemu/sdkconfig \
@@ -169,61 +150,86 @@ qemu-system-xtensa -M esp32 -m 4M \
   -nographic -serial mon:stdio
 ```
 
-(`build_qemu/flash_image.bin` and `build_qemu/qemu_efuse.bin` are generated the
-first time you run `idf.py -B build_qemu qemu`.)
+(`build_qemu/flash_image.bin` e `build_qemu/qemu_efuse.bin` aparecem na primeira
+vez que se roda `idf.py -B build_qemu qemu`.)
 
-Then open <http://127.0.0.1:8080/> in a browser, or drive it from the shell:
+Abra <http://127.0.0.1:8080/> ou:
 
 ```bash
-curl http://127.0.0.1:8080/                       # fetch the config page
+curl http://127.0.0.1:8080/
 curl -X POST --data 'ssid=MyHomeWiFi&password=secret' \
-     http://127.0.0.1:8080/connect                # submit credentials
+     http://127.0.0.1:8080/connect
 ```
 
-The submitted credentials are persisted to NVS. In the QEMU build the portal
-then shows the simulated connected status page; power-cycle the emulator to see
-the device report `found stored credentials for SSID '...'` on the next boot.
+No build QEMU o portal passa a mostrar o estado conectado simulado. Reinicie o
+emulador para ver `found stored credentials for SSID '...'`.
 
-## Tests
+## Testes
 
-Pure form-handling logic (URL decoding, field parsing, SSID/password validation)
-lives in the `wifi_form` component and is covered by host unit tests that run
-natively with `gcc` + Unity — no hardware or emulator required:
+A lógica do formulário (URL, campos, SSID e senha) está no componente
+`wifi_form` e tem testes de host com `gcc` + Unity:
 
 ```bash
 ./host_test/run.sh
 ```
 
-## Project layout
+## CI
+
+O workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) faz, em push e
+pull request para `main`:
+
+- secret scanning com Gitleaks
+- garantia de que `src/secrets.h` não está versionado
+- build PlatformIO do firmware de referência
+- build **ESP-IDF 5.3.2** do CYD, com artefato `release` contendo
+  `firmware-cyd.bin` (imagem única) e `esp32-ota.bin` (payload do `POST /ota`)
+
+## Layout
 
 ```
 .
-├── CMakeLists.txt          # top-level ESP-IDF project file
-├── sdkconfig.defaults      # target (esp32), flash size, HTTP header limit
-├── sdkconfig.cyd           # 2.8" CYD overlay: onboard ILI9341 + touch
-├── sdkconfig.qemu          # QEMU overlay: disables Wi-Fi radio and panel
-├── docs/                   # pt-BR guide + install steps + panel screenshots
-├── release/cyd/            # prebuilt binaries + flash.bat / flash.sh
+├── CMakeLists.txt
+├── partitions_ota.csv      # nvs + otadata + ota_0 + ota_1
+├── sdkconfig.defaults
+├── sdkconfig.cyd
+├── sdkconfig.qemu
+├── docs/
+├── release/cyd/
 ├── scripts/pack-release-cyd.sh
 ├── components/
-│   ├── esp_lcd_ili9341/    # vendored ILI9341 panel driver (Apache-2.0)
-│   └── wifi_form/          # pure, host-testable form parsing + validation
+│   ├── esp_lcd_ili9341/
+│   └── wifi_form/
 ├── host_test/
-│   ├── run.sh              # build + run the wifi_form unit tests (gcc + Unity)
-│   └── test_wifi_form.c    # Unity test cases
-├── main/
-│   ├── CMakeLists.txt      # component registration + dependencies
-│   ├── Kconfig.projbuild   # APP_ENABLE_WIFI_RADIO / APP_ENABLE_CYD
-│   ├── main.c              # app_main: chip info + wifi_manager bring-up
-│   ├── wifi_manager.[ch]   # STA-from-NVS, SoftAP provisioning, NVS
-│   ├── app.html            # touch UI: chat, devices, settings, idle clock
-│   ├── cyd_scene.[ch]      # 320×240 panel drawing (HA view, clock, kitten)
-│   ├── cyd_display.[ch]    # ILI9341 + XPT2046 + 40 min sleep
-│   ├── ha_client.[ch]      # polls Home Assistant /api/states on the LAN
-│   ├── http_server.[ch]    # portal + assistant routes; embeds app.html
-│   ├── assistant.[ch]      # hub/bot config in NVS + mock chat/devices
-│   └── qemu_eth.[ch]       # emulated OpenCores Ethernet (QEMU only)
-└── .cursor/
-    ├── environment.json    # Cloud Agent environment definition
-    └── install.sh          # idempotent toolchain + QEMU bootstrap
+├── main/                   # portal, HA, painel, OTA
+├── platformio.ini          # firmware de referência (abaixo)
+└── src/                    # firmware de referência
 ```
+
+## Firmware de referência PlatformIO
+
+Ponto de partida separado (DevKit, sem o painel CYD): Wi-Fi com reconexão,
+MQTT (`PubSubClient`, QoS 1, LWT) e OTA Arduino. Credenciais em `src/secrets.h`,
+que **não** entra no git. Na primeira `pio run`, `scripts/ensure_secrets.py`
+copia `src/secrets.example.h`.
+
+```sh
+pio run
+pio run -t upload
+pio run -t monitor
+```
+
+| Constante | Uso |
+|-----------|-----|
+| `DEVICE_NAME` | ID no broker e no OTA |
+| `WIFI_TIMEOUT_MS` | Timeout do Wi-Fi |
+| `MQTT_BROKER_HOST` / `PORT` | Broker |
+| `MQTT_TOPIC_TELEMETRY` | Telemetria |
+| `MQTT_TOPIC_STATUS` | online/offline (LWT) |
+| `MQTT_TOPIC_COMMAND` | `led:on`, `led:off`, `led:toggle` |
+| `PUBLISH_INTERVAL_MS` | Intervalo da telemetria |
+
+Tópicos: `devices/<nome>/telemetry`, `.../status`, `.../command`.
+
+## Licença
+
+MIT — veja `LICENSE`.

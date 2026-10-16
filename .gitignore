@@ -1,3 +1,14 @@
+# Credenciais — nunca versionar
+src/secrets.h
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+.vscode/.browse.VC.db*
+.vscode/.browse.VC.db-wal
+.vscode/.browse.VC.db-shm
+
 # ESP-IDF build output
 /build/
 /build_qemu/
@@ -8,7 +19,17 @@ sdkconfig.old
 # Host unit test build output
 /host_test/build/
 
-# Editor / OS
+# Binários de build. O pacote pronto do CYD continua versionado.
+*.bin
+*.elf
+*.hex
+!release/cyd/*.bin
+
+# IDE / SO
 .vscode/
+.vscode/*
+!.vscode/extensions.json
+.idea/
 *.swp
 .DS_Store
+Thumbs.db

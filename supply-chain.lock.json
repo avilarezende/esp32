@@ -1,0 +1,8 @@
+{
+  "actions": {
+    "actions/checkout@v4": "11d5960a326750d5838078e36cf38b85af677262",
+    "gitleaks/gitleaks-action@v2": "ff98106e4c7b2bc287b24eaf42907196329070c7",
+    "actions/setup-python@v5": "a26af69be951a213d495a4c3e4e4022e16d87065"
+  },
+  "images": {}
+}
