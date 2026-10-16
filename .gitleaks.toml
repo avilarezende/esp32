@@ -1,0 +1,13 @@
+title = "esp32"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Pixel tables, fonts and the prebuilt CYD images are not credentials"
+paths = [
+  '''main/calico_splash\.inc''',
+  '''main/clock_font\.inc''',
+  '''main/cyd_font\.inc''',
+  '''release/cyd/''',
+]
