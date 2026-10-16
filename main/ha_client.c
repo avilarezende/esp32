@@ -314,16 +314,24 @@ static int build_summary_body(char *out, size_t n)
     int first = 1;
     while (*p && k < (int)sizeof tpl - 200) {
         while (*p == ',' || *p == ' ') p++;
-        char id[72]; int m = 0;
-        while (*p && *p != ',' && m < 71) {
+        char id[72], lb[20]; int m = 0, l = 0;
+        while (*p && *p != ',' && *p != '=' && m < 71) {
             char ch = *p++;
             if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '.') id[m++] = ch;
         }
         id[m] = '\0';
-        if (m > 2 && strchr(id, '.')) { k += snprintf(tpl + k, sizeof tpl - k, "%s'%s'", first ? "" : ",", id); first = 0; }
+        if (*p == '=') {   /* optional "entity=Label" */
+            p++;
+            while (*p && *p != ',') {
+                char ch = *p++;
+                if (l < 17 && ch != '\'' && ch != '|' && ch != '{' && ch != '}' && ch != '%' && ch != '\\' && (unsigned char)ch >= 0x20) lb[l++] = ch;
+            }
+        }
+        lb[l] = '\0';
+        if (m > 2 && strchr(id, '.')) { k += snprintf(tpl + k, sizeof tpl - k, "%s('%s','%s')", first ? "" : ",", id, lb); first = 0; }
     }
     k += snprintf(tpl + k, sizeof tpl - k, "%s",
-        "] %}{% set s = states[e.split('.')[0]][e.split('.')[1]] %}{% if s %}\nD|{{ s.name[:17]|replace('|',' ') }}|{{ s.domain }}|{{ s.state }}{% endif %}{% endfor %}"
+        "] %}{% set s = states[e[0].split('.')[0]][e[0].split('.')[1]] %}{% if s %}\nD|{{ (e[1] or s.name)[:17]|replace('|',' ') }}|{{ s.domain }}|{{ s.state }}{% endif %}{% endfor %}"
         "\nU|{{ states.update|selectattr('state','eq','on')|list|count }}");
     if (cfg->pets) {
         k += snprintf(tpl + k, sizeof tpl - k, "%s",

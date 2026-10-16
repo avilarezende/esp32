@@ -19,7 +19,7 @@ typedef struct {
     int level; /* 0 info, 1 aviso, 2 critico */
 } cyd_alert_row_t;
 
-#define CYD_ROW_MAX 4
+#define CYD_ROW_MAX 5
 
 typedef struct {
     char name[18];

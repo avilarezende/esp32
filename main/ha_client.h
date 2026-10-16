@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define HA_DEVICE_MAX 4
+#define HA_DEVICE_MAX 5
 #define HA_NAME_MAX   18
 #define HA_DETAIL_MAX 16
 

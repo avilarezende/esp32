@@ -923,7 +923,7 @@ static void paint_home(canvas_t *c, const cyd_scene_t *scene)
         if (scene->cat_on) kitten_act(c, 112, 148, 1, 2, scene);
     } else {
         for (int i = 0; i < scene->row_count && i < CYD_ROW_MAX; i++) {
-            int y = 88 + i * 28;
+            int y = 88 + i * 22;
             const cyd_row_t *r = &scene->rows[i];
             uint16_t name_c = c->white;
             uint16_t det_c = c->muted;
