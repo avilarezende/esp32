@@ -223,6 +223,12 @@ static int touch_down(void)
 
 /* Touch position in screen coordinates (landscape). Uses the usual CYD
  * calibration (raw X 200..3700 -> 0..319, raw Y 240..3800 -> 0..239). */
+static volatile int s_traw_x, s_traw_y, s_tx = -1, s_ty = -1, s_tcount;
+void cyd_touch_json(char *buf, size_t n)
+{
+    snprintf(buf, n, "{\"raw_x\":%d,\"raw_y\":%d,\"x\":%d,\"y\":%d,\"count\":%d}", s_traw_x, s_traw_y, s_tx, s_ty, s_tcount);
+}
+
 static int touch_xy(int *sx, int *sy)
 {
     if (!s_touch || !touch_down()) {
@@ -239,10 +245,12 @@ static int touch_xy(int *sx, int *sy)
         return 0;
     }
     rx /= n; ry /= n;
+    s_traw_x = rx; s_traw_y = ry;
     int x = (rx - 200) * CYD_W / 3500;
     int y = (ry - 240) * CYD_H / 3560;
     *sx = x < 0 ? 0 : (x >= CYD_W ? CYD_W - 1 : x);
     *sy = y < 0 ? 0 : (y >= CYD_H ? CYD_H - 1 : y);
+    s_tx = *sx; s_ty = *sy; s_tcount++;
     return 1;
 }
 
@@ -529,7 +537,8 @@ static void display_task(void *arg)
     int last_mode = -1;
     int behavior = 0, beh_start = 0, beh_len = 24;
     int was_down = 0;
-    int alerts_view = 0;
+    int alerts_view = 0, long_done = 0, alert_count_last = 0, banner_last = 0;
+    int64_t down_since = 0;
     int64_t alerts_since = 0;
     char alert_ids[CYD_ALERT_ROWS][32];
     memset(alert_ids, 0, sizeof alert_ids);
@@ -571,20 +580,25 @@ static void display_task(void *arg)
             if (!s_screen_on) {
                 set_screen(1);
             }
-            int bx = on_saver ? CYD_BADGE_X_SAVER : CYD_BADGE_X;
+            if (!was_down) down_since = esp_timer_get_time();
+            int has_alerts = alert_count_last > 0;
+            /* long press (0.8 s) anywhere while alerts exist: clear them all */
+            if (was_down && has_alerts && !long_done && esp_timer_get_time() - down_since > 800000) {
+                cyd_alert_dismiss(NULL);
+                alerts_view = 0;
+                long_done = 1;
+            }
+            if (!was_down) long_done = 0;
             if (!was_down && alerts_view) {
                 alerts_since = esp_timer_get_time();
-                if (ty >= 0 && ty < 36) {
-                    alerts_view = 0;
-                } else if (ty >= 40) {
-                    int row = (ty - 40) / 46;
-                    if (row >= 0 && row < CYD_ALERT_ROWS && alert_ids[row][0]) cyd_alert_dismiss(alert_ids[row]);
-                }
+                if (ty >= 180) cyd_alert_dismiss(NULL);   /* big "Limpar tudo" button */
+                alerts_view = 0;                          /* any other tap: seen, close */
                 was_down = 1;
                 continue;
             }
-            if (!was_down && (last_mode == CYD_UI_HOME || on_saver) && tx >= bx && tx < bx + CYD_BADGE_W + 8 &&
-                ty >= 0 && ty < CYD_BADGE_Y + CYD_BADGE_H + 8) {
+            /* big target: whole top strip (left of the Porta button) or the banner */
+            if (!was_down && has_alerts && (last_mode == CYD_UI_HOME || on_saver) && ty >= 0 &&
+                ((ty < 70 && tx < CYD_CAMBTN_X - 6) || (banner_last && ty >= 190))) {
                 alerts_view = 1;
                 alerts_since = esp_timer_get_time();
                 was_down = 1;
@@ -633,8 +647,10 @@ static void display_task(void *arg)
         }
         if (cyd_cfg()->alerts) {
             int n = fill_alerts(&scene, alert_ids);
-            scene.alert_count = n + scene.updates;
+            scene.alert_count = n;   /* updates only listed, never block the badge */
         }
+        alert_count_last = scene.alert_count;
+        banner_last = scene.banner;
         if (!scene.has_temp && !scene.has_humidity && scene.row_count == 0 &&
             strcmp(scene.status, "HA ok") != 0) {
             /* Keep the glanceable numbers until HA answers. */
@@ -726,6 +742,7 @@ esp_err_t cyd_display_start(void)
 #include <stdio.h>
 
 void cyd_display_apply_cfg(void) {}
+void cyd_touch_json(char *buf, size_t n) { if (n) snprintf(buf, n, "{}"); }
 void cyd_alert_push(const char *id, const char *title, const char *msg, int level, int secs) { (void)id; (void)title; (void)msg; (void)level; (void)secs; }
 void cyd_alert_dismiss(const char *id) { (void)id; }
 void cyd_alerts_json(char *buf, size_t n) { if (n) snprintf(buf, n, "[]"); }

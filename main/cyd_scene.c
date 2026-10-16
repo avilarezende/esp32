@@ -730,7 +730,7 @@ static void alert_banner(canvas_t *c, const cyd_scene_t *s)
 static void paint_alerts(canvas_t *c, const cyd_scene_t *s)
 {
     text(c, 8, 8, 2, "Alertas", c->white);
-    text(c, CYD_W - text_px("fechar X", 1) - 8, 12, 1, "fechar X", c->muted);
+    text(c, CYD_W - text_px("toque = visto", 1) - 8, 12, 1, "toque = visto", c->muted);
     fill_rect(c, 8, 34, CYD_W - 16, 1, c->muted);
     int y = 40;
     if (s->updates > 0) {
@@ -740,12 +740,13 @@ static void paint_alerts(canvas_t *c, const cyd_scene_t *s)
         y += 24;
     }
     if (s->alert_rows == 0 && s->updates == 0) text_center(c, 110, 1, "nenhum alerta", c->muted);
-    for (int i = 0; i < s->alert_rows && y < 230; i++, y += 46) {
-        fill_rect(c, 8, y, 4, 40, level_col(c, s->alerts[i].level));
+    for (int i = 0; i < s->alert_rows && i < 3 && y < 176; i++, y += 44) {
+        fill_rect(c, 8, y, 4, 38, level_col(c, s->alerts[i].level));
         text(c, 18, y + 4, 1, s->alerts[i].title, c->white);
         text(c, 18, y + 22, 1, s->alerts[i].msg, c->muted);
     }
-    text(c, 8, 228, 1, "toque no alerta para dispensar", c->muted);
+    fill_rect(c, 8, 184, CYD_W - 16, 50, rgb565(220, 38, 38));
+    text_center(c, 196, 2, "LIMPAR TUDO", c->white);
 }
 
 static void paint_portal(canvas_t *c)

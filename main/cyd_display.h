@@ -22,3 +22,4 @@ void cyd_display_apply_cfg(void);
 void cyd_alert_push(const char *id, const char *title, const char *msg, int level, int secs);
 void cyd_alert_dismiss(const char *id);
 void cyd_alerts_json(char *buf, size_t n);
+void cyd_touch_json(char *buf, size_t n);
