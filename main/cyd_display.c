@@ -22,6 +22,9 @@
 #include "esp_timer.h"
 
 #include "cyd_scene.h"
+#include "cyd_camera.h"
+#include "nvs.h"
+#include "esp_random.h"
 #include "ha_client.h"
 #include "wifi_manager.h"
 
@@ -49,6 +52,23 @@ static esp_lcd_panel_handle_t s_panel;
 static spi_device_handle_t s_touch;
 static int s_sntp_started;
 static int s_screen_on = 1;
+
+/* Camera viewer request (set from the HTTP task, consumed by the display task). */
+static portMUX_TYPE s_cam_mux = portMUX_INITIALIZER_UNLOCKED;
+static char s_cam_entity[64];
+static int s_cam_secs;
+static volatile int64_t s_test_until;
+
+static uint8_t cfg_u8(const char *key, uint8_t def)
+{
+    nvs_handle_t h;
+    uint8_t v = def;
+    if (nvs_open("app_cfg", NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_u8(h, key, &v);
+        nvs_close(h);
+    }
+    return v;
+}
 
 /* DRAM, not the heap. On ESP-IDF 6, MALLOC_CAP_INTERNAL can return 32-bit
  * IRAM; a uint16 store there is a LoadStoreError and reboots the chip. */
@@ -85,6 +105,31 @@ static int touch_down(void)
         return gpio_get_level(PIN_TOUCH_IRQ) == 0;
     }
     return z > 200 && z < 4000;
+}
+
+/* Touch position in screen coordinates (landscape). Uses the usual CYD
+ * calibration (raw X 200..3700 -> 0..319, raw Y 240..3800 -> 0..239). */
+static int touch_xy(int *sx, int *sy)
+{
+    if (!s_touch || !touch_down()) {
+        return 0;
+    }
+    int rx = 0, ry = 0, n = 0;
+    for (int i = 0; i < 4; i++) {
+        int x = xpt_sample(0x91);
+        int y = xpt_sample(0xD1);
+        if (x > 0 && y > 0) { rx += x; ry += y; n++; }
+    }
+    xpt_sample(0x80);
+    if (!n) {
+        return 0;
+    }
+    rx /= n; ry /= n;
+    int x = (rx - 200) * CYD_W / 3500;
+    int y = (ry - 240) * CYD_H / 3560;
+    *sx = x < 0 ? 0 : (x >= CYD_W ? CYD_W - 1 : x);
+    *sy = y < 0 ? 0 : (y >= CYD_H ? CYD_H - 1 : y);
+    return 1;
 }
 
 static void flush_band(const uint16_t *src, int y, int rows)
@@ -217,9 +262,9 @@ static esp_err_t panel_bringup(void)
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = -1,
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
-        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
+        .rgb_ele_order = cfg_u8("disp_bgr", 1) ? LCD_RGB_ELEMENT_ORDER_BGR : LCD_RGB_ELEMENT_ORDER_RGB,
 #else
-        .rgb_endian = LCD_RGB_ENDIAN_BGR,
+        .rgb_endian = cfg_u8("disp_bgr", 1) ? LCD_RGB_ENDIAN_BGR : LCD_RGB_ENDIAN_RGB,
 #endif
         .bits_per_pixel = 16,
     };
@@ -240,7 +285,7 @@ static esp_err_t panel_bringup(void)
         err = esp_lcd_panel_mirror(s_panel, false, false);
     }
     if (err == ESP_OK) {
-        err = esp_lcd_panel_invert_color(s_panel, true);
+        err = esp_lcd_panel_invert_color(s_panel, cfg_u8("disp_inv", 1) != 0);
     }
     if (err == ESP_OK) {
         err = esp_lcd_panel_disp_on_off(s_panel, true);
@@ -284,6 +329,82 @@ static esp_err_t panel_bringup(void)
     return ESP_OK;
 }
 
+static void wait_release(int max_ms)
+{
+    for (int t = 0; t < max_ms && touch_down(); t += 30) {
+        vTaskDelay(pdMS_TO_TICKS(30));
+    }
+}
+
+static void fill_black(void)
+{
+    memset(s_wire, 0, sizeof s_wire);
+    for (int y = 0; y < CYD_H; y += BAND_H) {
+        esp_lcd_panel_draw_bitmap(s_panel, 0, y, CYD_W, y + BAND_H, s_wire);
+    }
+}
+
+/* Live snapshots of `entity`, ~1/s, until `secs` pass or the screen is tapped. */
+static void run_camera(const char *entity, int secs)
+{
+    ESP_LOGI(TAG, "camera %s for %ds", entity, secs);
+    set_screen(1);
+    wait_release(1500);
+    fill_black();
+    int64_t until = esp_timer_get_time() + (int64_t)secs * 1000000;
+    int fails = 0;
+    while (esp_timer_get_time() < until) {
+        int64_t t0 = esp_timer_get_time();
+        uint8_t *jpg = NULL;
+        int len = 0;
+        if (ha_client_fetch_camera(entity, &jpg, &len) == ESP_OK &&
+            cyd_camera_draw(s_panel, jpg, len) == ESP_OK) {
+            fails = 0;
+        } else if (++fails >= 4) {
+            free(jpg);
+            break;
+        }
+        free(jpg);
+        /* ~1 frame per second; a new tap closes the viewer. */
+        while ((esp_timer_get_time() - t0) < 1000000) {
+            if (touch_down()) {
+                wait_release(1500);
+                return;
+            }
+            vTaskDelay(pdMS_TO_TICKS(40));
+        }
+        portENTER_CRITICAL(&s_cam_mux);
+        if (s_cam_secs > 0) {   /* a new request while open: extend/switch */
+            until = esp_timer_get_time() + (int64_t)s_cam_secs * 1000000;
+            s_cam_secs = 0;
+        }
+        portEXIT_CRITICAL(&s_cam_mux);
+    }
+}
+
+void cyd_display_show_camera(const char *entity, int seconds)
+{
+    if (!entity || !entity[0]) return;
+    if (seconds <= 0 || seconds > 120) seconds = 20;
+    portENTER_CRITICAL(&s_cam_mux);
+    snprintf(s_cam_entity, sizeof s_cam_entity, "%s", entity);
+    s_cam_secs = seconds;
+    portEXIT_CRITICAL(&s_cam_mux);
+}
+
+void cyd_display_set_color(int invert, int bgr, int test)
+{
+    nvs_handle_t h;
+    if ((invert >= 0 || bgr >= 0) && nvs_open("app_cfg", NVS_READWRITE, &h) == ESP_OK) {
+        if (invert >= 0) nvs_set_u8(h, "disp_inv", invert ? 1 : 0);
+        if (bgr >= 0) nvs_set_u8(h, "disp_bgr", bgr ? 1 : 0);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    if (invert >= 0 && s_panel) esp_lcd_panel_invert_color(s_panel, invert != 0);
+    if (test) s_test_until = esp_timer_get_time() + 15000000LL;
+}
+
 static void display_task(void *arg)
 {
     (void)arg;
@@ -291,20 +412,61 @@ static void display_task(void *arg)
     int64_t idle_since = esp_timer_get_time();
     int frame = 0;
     int last_mode = -1;
+    int behavior = 0, beh_start = 0, beh_len = 24;
+    int was_down = 0;
 
     while (1) {
         maybe_sntp();
-        if (touch_down()) {
+
+        /* Camera requested by HA (doorbell) or by the quick button. */
+        char cam[64] = {0};
+        int cam_secs = 0;
+        portENTER_CRITICAL(&s_cam_mux);
+        if (s_cam_secs > 0) {
+            memcpy(cam, s_cam_entity, sizeof cam);
+            cam_secs = s_cam_secs;
+            s_cam_secs = 0;
+        }
+        portEXIT_CRITICAL(&s_cam_mux);
+        if (cam_secs > 0) {
+            run_camera(cam, cam_secs);
+            idle_since = esp_timer_get_time();
+            last_mode = -1;
+            was_down = 0;
+        }
+
+        int tx = 0, ty = 0;
+        int down = touch_xy(&tx, &ty) || touch_down();
+        if (down) {
+            int woke = !s_screen_on || last_mode != CYD_UI_HOME;
             idle_since = esp_timer_get_time();
             if (!s_screen_on) {
                 set_screen(1);
             }
+            if (!was_down && !woke && tx >= CYD_CAMBTN_X - 10 && ty <= CYD_CAMBTN_Y + CYD_CAMBTN_H + 10 &&
+                wifi_manager_is_connected()) {
+                cyd_display_show_camera("camera.frigate_frente_direita", 20);
+                was_down = 1;
+                continue;
+            }
+        }
+        was_down = down;
+
+        if (frame - beh_start >= beh_len) {
+            int prev = behavior;
+            do { behavior = (int)(esp_random() % 5); } while (behavior == prev);
+            beh_start = frame;
+            beh_len = behavior == 1 ? 48 + (int)(esp_random() % 32) : 20 + (int)(esp_random() % 16);
         }
 
         int64_t idle_ms = (esp_timer_get_time() - idle_since) / 1000;
         cyd_scene_t scene;
         memset(&scene, 0, sizeof scene);
         scene.tail = frame / 2;
+        scene.behavior = behavior;
+        scene.phase = frame - beh_start;
+        scene.cam_btn = 1;
+        scene.test_bars = esp_timer_get_time() < s_test_until;
         scene.blink = ((frame % 16) >= 14);
         fill_time(&scene);
         fill_from_ha(&scene);
@@ -362,11 +524,14 @@ static void display_task(void *arg)
         int samples = (scene.mode == CYD_UI_SLEEP) ? 10 : 5;
         for (int i = 0; i < samples; i++) {
             vTaskDelay(pdMS_TO_TICKS(50));
+            if (s_cam_secs > 0) {
+                break;
+            }
             if (touch_down()) {
-                idle_since = esp_timer_get_time();
-                if (!s_screen_on) {
-                    set_screen(1);
+                if (!was_down) {
+                    break;   /* handle the new tap (wake / button) right away */
                 }
+                idle_since = esp_timer_get_time();
             }
         }
     }
@@ -388,6 +553,10 @@ esp_err_t cyd_display_start(void)
 }
 
 #else /* !CONFIG_APP_ENABLE_CYD */
+
+void cyd_display_show_camera(const char *entity, int seconds) { (void)entity; (void)seconds; }
+void cyd_display_set_color(int invert, int bgr, int test) { (void)invert; (void)bgr; (void)test; }
+
 
 esp_err_t cyd_display_start(void)
 {

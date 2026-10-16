@@ -7,9 +7,11 @@ idf_component_register(SRCS "main.c"
                             "cyd_scene.c"
                             "cyd_display.c"
                             "cyd_splash.c"
+                            "cyd_camera.c"
                        INCLUDE_DIRS "."
                        EMBED_TXTFILES "app.html"
                        REQUIRES spi_flash
+                                mbedtls
                                 esp_wifi
                                 esp_lcd
                                 esp_lcd_ili9341

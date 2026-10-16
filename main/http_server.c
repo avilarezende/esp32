@@ -1,4 +1,7 @@
 #include "http_server.h"
+#include "cyd_display.h"
+#include "ha_client.h"
+#include <stdlib.h>
 
 #include <string.h>
 #include <stdio.h>
@@ -189,6 +192,66 @@ static esp_err_t chat_post_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+
+/* Params from the query string and/or a urlencoded body. */
+static void get_param(httpd_req_t *req, const char *body, const char *key, char *out, size_t n)
+{
+    out[0] = '\0';
+    char q[256];
+    if (httpd_req_get_url_query_str(req, q, sizeof q) == ESP_OK &&
+        httpd_query_key_value(q, key, out, n) == ESP_OK && out[0]) {
+        return;
+    }
+    if (body && body[0]) wifi_form_get_field(body, key, out, n);
+}
+
+static bool key_ok(httpd_req_t *req, const char *body)
+{
+    char key[40], want[17];
+    get_param(req, body, "key", key, sizeof key);
+    ha_client_device_key(want);
+    return want[0] && strcmp(key, want) == 0;
+}
+
+/* POST /camera?key=..&entity=camera.x&seconds=20 -> live snapshots on the panel. */
+static esp_err_t camera_post_handler(httpd_req_t *req)
+{
+    char body[POST_BODY_MAXLEN] = {0};
+    if (req->content_len > 0 && read_body(req, body, sizeof(body)) < 0) return ESP_FAIL;
+    httpd_resp_set_type(req, "application/json");
+    if (!key_ok(req, body)) {
+        httpd_resp_set_status(req, "403 Forbidden");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"key\"}");
+    }
+    char ent[64], secs[8];
+    get_param(req, body, "entity", ent, sizeof ent);
+    get_param(req, body, "seconds", secs, sizeof secs);
+    if (strncmp(ent, "camera.", 7) != 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"entity\"}");
+    }
+    cyd_display_show_camera(ent, atoi(secs));
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+/* POST /display?key=..&invert=0|1&bgr=0|1&test=1 (bgr applies after reboot). */
+static esp_err_t display_post_handler(httpd_req_t *req)
+{
+    char body[POST_BODY_MAXLEN] = {0};
+    if (req->content_len > 0 && read_body(req, body, sizeof(body)) < 0) return ESP_FAIL;
+    httpd_resp_set_type(req, "application/json");
+    if (!key_ok(req, body)) {
+        httpd_resp_set_status(req, "403 Forbidden");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"key\"}");
+    }
+    char inv[4], bgr[4], test[4];
+    get_param(req, body, "invert", inv, sizeof inv);
+    get_param(req, body, "bgr", bgr, sizeof bgr);
+    get_param(req, body, "test", test, sizeof test);
+    cyd_display_set_color(inv[0] ? atoi(inv) : -1, bgr[0] ? atoi(bgr) : -1, test[0] == '1');
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
 static esp_err_t hub_post_handler(httpd_req_t *req)
 {
     char body[POST_BODY_MAXLEN];
@@ -336,6 +399,8 @@ httpd_handle_t http_config_server_start(void)
         { .uri = "/chat",         .method = HTTP_POST, .handler = chat_post_handler },
         { .uri = "/hub",          .method = HTTP_POST, .handler = hub_post_handler },
         { .uri = "/bot",          .method = HTTP_POST, .handler = bot_post_handler },
+        { .uri = "/camera",       .method = HTTP_POST, .handler = camera_post_handler },
+        { .uri = "/display",      .method = HTTP_POST, .handler = display_post_handler },
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
         httpd_register_uri_handler(server, &uris[i]);

@@ -38,7 +38,17 @@ typedef struct {
     char place[16];
     char status[20];
     char ip[20];
+    int cam_btn;     /* draw the "frente direita" camera button (home) */
+    int behavior;    /* cat: 0 idle, 1 sleep, 2 stretch, 3 paw, 4 look around */
+    int phase;       /* animation step inside the behaviour */
+    int test_bars;   /* colour test pattern */
 } cyd_scene_t;
+
+/* Camera quick button on the home screen (touch target, screen coords). */
+#define CYD_CAMBTN_X 252
+#define CYD_CAMBTN_Y 26
+#define CYD_CAMBTN_W 62
+#define CYD_CAMBTN_H 46
 
 /* Paint one horizontal band of the 320x240 scene into `band` (band_h rows). */
 void cyd_scene_paint(uint16_t *band, int y0, int band_h, const cyd_scene_t *scene);

@@ -560,3 +560,60 @@ void ha_client_conversation(const char *text, char *out, size_t out_len)
 done:
     free(pass); free(auth); free(req); free(ctx.body);
 }
+
+
+/* ---- Camera snapshots / device key ---- */
+
+#include "mbedtls/sha256.h"
+
+void ha_client_device_key(char out[17])
+{
+    out[0] = '\0';
+    char *pass = calloc(1, ASSISTANT_TOKEN_MAX);
+    if (!pass) return;
+    assistant_get_hub(NULL, 0, NULL, 0, NULL, 0, pass, ASSISTANT_TOKEN_MAX);
+    if (pass[0]) {
+        unsigned char d[32];
+        mbedtls_sha256((const unsigned char *)pass, strlen(pass), d, 0);
+        for (int i = 0; i < 8; i++) snprintf(out + i * 2, 3, "%02x", d[i]);
+    }
+    free(pass);
+}
+
+esp_err_t ha_client_fetch_camera(const char *entity, uint8_t **jpg, int *len)
+{
+    *jpg = NULL; *len = 0;
+    char type[ASSISTANT_STR_MAX] = {0}, addr[ASSISTANT_STR_MAX] = {0};
+    char *pass = calloc(1, ASSISTANT_TOKEN_MAX);
+    char *auth = calloc(1, ASSISTANT_TOKEN_MAX + 24);
+    http_ctx_t ctx = {0};
+    ctx.cap = 40 * 1024;
+    ctx.body = malloc((size_t)ctx.cap);
+    esp_err_t ret = ESP_FAIL;
+    if (!pass || !auth || !ctx.body) { ret = ESP_ERR_NO_MEM; goto out; }
+    assistant_get_hub(type, sizeof type, addr, sizeof addr, NULL, 0, pass, ASSISTANT_TOKEN_MAX);
+    if (!pass[0] || !addr[0]) { ret = ESP_ERR_INVALID_STATE; goto out; }
+    char url[192];
+    const char *pre = (strncmp(addr, "http://", 7) == 0 || strncmp(addr, "https://", 8) == 0) ? "" : "http://";
+    snprintf(url, sizeof url, "%s%s/api/camera_proxy/%s?width=320&height=240", pre, addr, entity);
+    snprintf(auth, ASSISTANT_TOKEN_MAX + 24, "Bearer %s", pass);
+    esp_http_client_config_t cfg = {
+        .url = url, .method = HTTP_METHOD_GET, .timeout_ms = 5000,
+        .event_handler = http_event, .user_data = &ctx,
+        .buffer_size = HTTP_BUF_MAX, .buffer_size_tx = 1024,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (!client) goto out;
+    esp_http_client_set_header(client, "Authorization", auth);
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    if (err != ESP_OK || status != 200 || ctx.len < 4) {
+        ESP_LOGW(TAG, "camera %s failed err=%s status=%d", entity, esp_err_to_name(err), status);
+        goto out;
+    }
+    *jpg = (uint8_t *)ctx.body; *len = ctx.len; ctx.body = NULL; ret = ESP_OK;
+out:
+    free(pass); free(auth); free(ctx.body);
+    return ret;
+}

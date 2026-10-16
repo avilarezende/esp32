@@ -420,7 +420,7 @@ static void clock_at(canvas_t *c, int x, int y, int h, const char *hhmm, uint16_
     }
 }
 
-static void clock_row(canvas_t *c, int y, int h, const char *hhmm, uint16_t color)
+__attribute__((unused)) static void clock_row(canvas_t *c, int y, int h, const char *hhmm, uint16_t color)
 {
     int x = (CYD_W - clock_width(h, hhmm)) / 2;
     clock_at(c, x, y, h, hhmm, color);
@@ -485,6 +485,63 @@ static void tri(canvas_t *c, int ox, int oy, int n, int d,
              color);
 }
 
+
+/* ---- Anti-aliased clock (Montserrat SemiBold, 4-bit alpha) ---- */
+#include "clock_font.inc"
+
+static uint16_t blend565(uint16_t bg, uint16_t fg, int a /*0..15*/)
+{
+    int br = bg >> 11, bgc = (bg >> 5) & 63, bb = bg & 31;
+    int fr = fg >> 11, fgc = (fg >> 5) & 63, fb = fg & 31;
+    int r = br + (fr - br) * a / 15, g = bgc + (fgc - bgc) * a / 15, b = bb + (fb - bb) * a / 15;
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+static int aa_index(char ch)
+{
+    for (int i = 0; CF_CHARS[i]; i++) if (CF_CHARS[i] == ch) return i;
+    return -1;
+}
+
+static int aa_text(canvas_t *c, int x, int y, int big, const char *s, uint16_t color, int draw)
+{
+    const uint16_t *off = big ? CF_BIG_OFF : CF_SMALL_OFF;
+    const uint8_t *wv = big ? CF_BIG_W : CF_SMALL_W, *adv = big ? CF_BIG_ADV : CF_SMALL_ADV;
+    const uint8_t *pix = big ? CF_BIG_PIX : CF_SMALL_PIX;
+    int H = big ? CF_BIG_H : CF_SMALL_H;
+    int x0 = x;
+    for (; *s; s++) {
+        int gi = aa_index(*s);
+        if (gi < 0) { x += adv[0] / 2; continue; }
+        int w = wv[gi], ox = (adv[gi] - w) / 2;
+        if (draw) {
+            for (int yy = 0; yy < H; yy++) {
+                int sy = y + yy - c->y0;
+                if (sy < 0 || sy >= c->bh) continue;
+                for (int xx = 0; xx < w; xx++) {
+                    int sx = x + ox + xx;
+                    if (sx < 0 || sx >= CYD_W) continue;
+                    int i = yy * w + xx;
+                    uint8_t byte = pix[off[gi] + i / 2];
+                    int a = (i & 1) ? (byte & 15) : (byte >> 4);
+                    if (!a) continue;
+                    uint16_t *d = &c->band[sy * CYD_W + sx];
+                    *d = a == 15 ? color : blend565(*d, color, a);
+                }
+            }
+        }
+        x += adv[gi];
+    }
+    return x - x0;
+}
+
+static void aa_center(canvas_t *c, int y, int big, const char *s, uint16_t color)
+{
+    int w = aa_text(c, 0, y, big, s, color, 0);
+    aa_text(c, (CYD_W - w) / 2, y, big, s, color, 1);
+}
+
+static int s_pdx; /* pupil shift for "look around" */
 static void kitten(canvas_t *c, int ox, int oy, int n, int d, int blink, int tail)
 {
     /* Same shapes as the web SVG (viewBox 160x140): cream body, black cap
@@ -514,10 +571,10 @@ static void kitten(canvas_t *c, int ox, int oy, int n, int d, int blink, int tai
         fill_rect(c, ox + sc(71, n, d), y, sc(14, n, d), h, c->black);
         fill_rect(c, ox + sc(101, n, d), y, sc(14, n, d), h, c->black);
     } else {
-        ell(c, ox, oy, n, d, 78, 76, 7, 8, c->black);
-        ell(c, ox, oy, n, d, 108, 76, 7, 8, c->black);
-        ell(c, ox, oy, n, d, 80, 73, 2, 3, c->white);
-        ell(c, ox, oy, n, d, 110, 73, 2, 3, c->white);
+        ell(c, ox, oy, n, d, 78 + s_pdx, 76, 7, 8, c->black);
+        ell(c, ox, oy, n, d, 108 + s_pdx, 76, 7, 8, c->black);
+        ell(c, ox, oy, n, d, 80 + s_pdx, 73, 2, 3, c->white);
+        ell(c, ox, oy, n, d, 110 + s_pdx, 73, 2, 3, c->white);
     }
     ell(c, ox, oy, n, d, 93, 86, 4, 3, c->pink);
     line(c,
@@ -530,6 +587,78 @@ static void kitten(canvas_t *c, int ox, int oy, int n, int d, int blink, int tai
     line(c, ox + sc(68, n, d), oy + sc(88, n, d), ox + sc(46, n, d), oy + sc(90, n, d), c->black);
     line(c, ox + sc(116, n, d), oy + sc(82, n, d), ox + sc(138, n, d), oy + sc(76, n, d), c->black);
     line(c, ox + sc(116, n, d), oy + sc(88, n, d), ox + sc(138, n, d), oy + sc(90, n, d), c->black);
+}
+
+
+static int tri_wave(int p, int period, int amp)
+{
+    int q = p % period, h = period / 2;
+    return (q < h ? q : period - q) * amp / h;
+}
+
+/* The always-visible cat: several behaviours chosen at random by the display task. */
+static void kitten_act(canvas_t *c, int ox, int oy, int n, int d, const cyd_scene_t *sc_)
+{
+    int p = sc_->phase;
+    s_pdx = 0;
+    switch (sc_->behavior) {
+    case 1: { /* sleeping: eyes shut, slow breathing, rising z's */
+        int breath = tri_wave(p, 16, 3);
+        kitten(c, ox, oy + sc(4 + breath, n, d), n, d, 1, 0);
+        int zy = oy + sc(30, n, d) - (p % 12) * 2;
+        text(c, ox + sc(140, n, d), zy, 1, "z", c->cool);
+        if ((p % 12) > 5) text(c, ox + sc(152, n, d), zy - 10, n >= 1 && d <= 2 ? 2 : 1, "Z", c->cool);
+        break; }
+    case 2: { /* stretching: front paws slide forward, eyes closed at full stretch */
+        int ext = tri_wave(p, 24, 26);
+        kitten(c, ox, oy + sc(ext / 6, n, d), n, d, ext > 18, p);
+        ell(c, ox, oy, n, d, 62 - ext, 132, 18 + ext / 2, 6, c->cream);
+        ell(c, ox, oy, n, d, 44 - ext * 3 / 2, 132, 5, 5, c->pink);
+        ell(c, ox, oy, n, d, 120 + ext / 2, 132, 14 + ext / 3, 6, c->cream);
+        break; }
+    case 3: { /* pawing / tapping the glass */
+        kitten(c, ox, oy, n, d, (p % 16) >= 15, p);
+        int lift = tri_wave(p, 8, 30);
+        ell(c, ox, oy, n, d, 70, 112 - lift, 10, 8, c->cream);
+        ell(c, ox, oy, n, d, 70, 108 - lift, 4, 3, c->pink);
+        if (lift == 0) {
+            int cx = ox + sc(70, n, d), cy = oy + sc(100, n, d), r = sc(16, n, d);
+            line(c, cx - r, cy - r / 2, cx - r / 2, cy - r / 4, c->warm);
+            line(c, cx + r / 2, cy - r / 4, cx + r, cy - r / 2, c->warm);
+            line(c, cx, cy - r, cx, cy - r / 2, c->warm);
+        }
+        break; }
+    case 4: /* looking around */
+        s_pdx = (p / 6) % 3 == 0 ? -4 : ((p / 6) % 3 == 1 ? 0 : 4);
+        kitten(c, ox, oy, n, d, (p % 20) >= 19, p);
+        break;
+    default: /* idle: blink + tail sway */
+        kitten(c, ox, oy, n, d, (p % 16) >= 14, sc_->tail);
+        break;
+    }
+    s_pdx = 0;
+}
+
+static void cam_button(canvas_t *c)
+{
+    int x = CYD_CAMBTN_X, y = CYD_CAMBTN_Y, w = CYD_CAMBTN_W, h = CYD_CAMBTN_H;
+    fill_rect(c, x, y, w, h, c->muted);
+    fill_rect(c, x + 2, y + 2, w - 4, h - 4, c->bg);
+    /* camera glyph */
+    fill_rect(c, x + 14, y + 10, 26, 16, c->warm);
+    fill_tri(c, x + 40, y + 18, x + 50, y + 11, x + 50, y + 25, c->warm);
+    fill_disc(c, x + 27, y + 18, 4, c->bg);
+    text(c, x + (w - text_px("cam D", 1)) / 2, y + h - 14, 1, "cam D", c->white);
+}
+
+static void test_bars(canvas_t *c)
+{
+    static const char *lbl[5] = {"VERMELHO", "VERDE", "AZUL", "BRANCO", "PRETO"};
+    uint16_t col[5] = {rgb565(255, 0, 0), rgb565(0, 255, 0), rgb565(0, 0, 255), rgb565(255, 255, 255), 0};
+    for (int i = 0; i < 5; i++) {
+        fill_rect(c, 0, i * 48, CYD_W, 48, col[i]);
+        text(c, 10, i * 48 + 16, 2, lbl[i], i == 3 ? 0 : rgb565(255, 255, 255));
+    }
 }
 
 static void paint_portal(canvas_t *c)
@@ -621,7 +750,7 @@ static void paint_saver(canvas_t *c, const cyd_scene_t *scene)
     } else {
         memcpy(hhmm, "--:--", 6);
     }
-    clock_row(c, 2, 58, hhmm, c->white);
+    aa_center(c, 6, 1, hhmm, c->white);
     if (scene->time_valid) {
         char date[20];
         date_line(scene, date, sizeof date);
@@ -632,7 +761,7 @@ static void paint_saver(canvas_t *c, const cyd_scene_t *scene)
     }
     weather_pair(c, 96, 96, 2, scene->temp_c, scene->humidity);
     /* 2/3 of the web viewBox: about 107x93, same patches as the SVG. */
-    kitten(c, 106, 118, 2, 3, 1, scene->tail);
+    kitten_act(c, 106, 118, 2, 3, scene);
     text_center(c, 224, 1, "toque na tela", c->muted);
 }
 
@@ -649,7 +778,7 @@ static void paint_home(canvas_t *c, const cyd_scene_t *scene)
     } else {
         memcpy(hhmm, "--:--", 6);
     }
-    clock_at(c, 8, 4, 22, hhmm, c->white);
+    aa_text(c, 8, 5, 0, hhmm, c->white, 1);
     if (scene->status[0]) {
         int sw = text_px(scene->status, 1);
         text(c, CYD_W - sw - 8, 8, 1, scene->status, c->cool);
@@ -701,7 +830,7 @@ static void paint_home(canvas_t *c, const cyd_scene_t *scene)
             text_center(c, 110, 1, "erro ao ler o HA:", c->muted);
             text_center(c, 128, 1, scene->status, c->muted);
         }
-        kitten(c, 112, 148, 1, 2, scene->blink, scene->tail);
+        kitten_act(c, 112, 148, 1, 2, scene);
     } else {
         for (int i = 0; i < scene->row_count && i < CYD_ROW_MAX; i++) {
             int y = 88 + i * 28;
@@ -722,6 +851,12 @@ static void paint_home(canvas_t *c, const cyd_scene_t *scene)
     }
 
     text_center(c, 224, 1, "40 min sem toque: tela off", c->muted);
+    if (scene->row_count > 0) {
+        kitten_act(c, 268, 200, 1, 4, scene);
+    }
+    if (scene->cam_btn) {
+        cam_button(c);
+    }
 }
 
 static void paint_sleep(canvas_t *c)
@@ -752,6 +887,10 @@ void cyd_scene_paint(uint16_t *band, int y0, int band_h, const cyd_scene_t *scen
         return;
     }
     clear_band(&c);
+    if (scene->test_bars) {
+        test_bars(&c);
+        return;
+    }
     if (scene->mode == CYD_UI_PORTAL) {
         paint_portal(&c);
     } else if (scene->mode == CYD_UI_SAVER) {

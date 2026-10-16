@@ -19,7 +19,7 @@ void cyd_splash_play(esp_lcd_panel_handle_t panel, int w, int h, int loops)
             const uint8_t *px = SPLASH_PIX + (size_t)f * SPLASH_W * SPLASH_H;
             for (int y = 0; y < SPLASH_H; y += STRIP) {
                 int rows = (y + STRIP > SPLASH_H) ? SPLASH_H - y : STRIP;
-                for (int i = 0; i < SPLASH_W * rows; i++) s_line[i] = SPLASH_PAL[px[y * SPLASH_W + i]];
+                for (int i = 0; i < SPLASH_W * rows; i++) { uint16_t v = SPLASH_PAL[px[y * SPLASH_W + i]]; s_line[i] = (uint16_t)((v << 8) | (v >> 8)); }
                 esp_lcd_panel_draw_bitmap(panel, x0, y0 + y, x0 + SPLASH_W, y0 + y + rows, s_line);
             }
             vTaskDelay(pdMS_TO_TICKS(SPLASH_FRAME_MS));
