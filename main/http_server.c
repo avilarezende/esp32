@@ -1,6 +1,10 @@
 #include "http_server.h"
 #include "cyd_display.h"
 #include "ha_client.h"
+#include "cyd_cfg.h"
+#include "esp_ota_ops.h"
+#include "esp_https_ota.h"
+#include "esp_http_client.h"
 #include <stdlib.h>
 
 #include <string.h>
@@ -252,6 +256,99 @@ static esp_err_t display_post_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
 
+
+/* ---- Alerts ---- */
+static esp_err_t alert_post_handler(httpd_req_t *req)
+{
+    char body[POST_BODY_MAXLEN] = {0};
+    if (req->content_len > 0 && read_body(req, body, sizeof(body)) < 0) return ESP_FAIL;
+    httpd_resp_set_type(req, "application/json");
+    if (!key_ok(req, body)) {
+        httpd_resp_set_status(req, "403 Forbidden");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"key\"}");
+    }
+    char id[32], title[96], msg[192], lvl[12], dur[8], dis[32], clr[4];
+    get_param(req, body, "id", id, sizeof id);
+    get_param(req, body, "dismiss", dis, sizeof dis);
+    get_param(req, body, "clear", clr, sizeof clr);
+    if (clr[0] == '1') { cyd_alert_dismiss(NULL); return httpd_resp_sendstr(req, "{\"ok\":true}"); }
+    if (dis[0]) { cyd_alert_dismiss(dis); return httpd_resp_sendstr(req, "{\"ok\":true}"); }
+    get_param(req, body, "title", title, sizeof title);
+    get_param(req, body, "message", msg, sizeof msg);
+    get_param(req, body, "level", lvl, sizeof lvl);
+    get_param(req, body, "duration", dur, sizeof dur);
+    int level = (strcmp(lvl, "crit") == 0 || strcmp(lvl, "critical") == 0 || strcmp(lvl, "2") == 0) ? 2 :
+                ((strcmp(lvl, "warn") == 0 || strcmp(lvl, "warning") == 0 || strcmp(lvl, "1") == 0) ? 1 : 0);
+    if (!title[0] && !msg[0]) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"title/message\"}");
+    }
+    cyd_alert_push(id, title[0] ? title : "Home Assistant", msg, level, atoi(dur));
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static void alerts_json_fn(char *b, size_t n) { cyd_alerts_json(b, n); }
+static esp_err_t alerts_get_handler(httpd_req_t *req) { return send_json(req, alerts_json_fn, 1200); }
+
+/* ---- Settings (same LAN trust as /hub) ---- */
+static esp_err_t config_get_handler(httpd_req_t *req) { return send_json(req, cyd_cfg_json, 1024); }
+static esp_err_t config_post_handler(httpd_req_t *req)
+{
+    char body[POST_BODY_MAXLEN] = {0};
+    if (read_body(req, body, sizeof(body)) < 0) return ESP_FAIL;
+    cyd_cfg_set_form(body);
+    cyd_display_apply_cfg();
+    return send_json(req, cyd_cfg_json, 1024);
+}
+
+/* ---- OTA: POST /ota?key=.. with the raw esp32.bin, or ?url=http://.../esp32.bin ---- */
+static void reboot_soon(void *arg) { (void)arg; vTaskDelay(pdMS_TO_TICKS(1500)); esp_restart(); }
+
+static esp_err_t ota_post_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    if (!key_ok(req, NULL)) {
+        httpd_resp_set_status(req, "403 Forbidden");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"key\"}");
+    }
+    char url[200];
+    get_param(req, NULL, "url", url, sizeof url);
+    if (url[0]) {
+        esp_http_client_config_t hc = { .url = url, .timeout_ms = 15000, .keep_alive_enable = true };
+        esp_https_ota_config_t oc = { .http_config = &hc };
+        esp_err_t err = esp_https_ota(&oc);
+        if (err != ESP_OK) {
+            char m[96]; snprintf(m, sizeof m, "{\"ok\":false,\"error\":\"%s\"}", esp_err_to_name(err));
+            return httpd_resp_sendstr(req, m);
+        }
+        httpd_resp_sendstr(req, "{\"ok\":true,\"reboot\":true}");
+        xTaskCreate(reboot_soon, "ota_rb", 2048, NULL, 5, NULL);
+        return ESP_OK;
+    }
+    const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
+    if (!part || req->content_len <= 0 || (size_t)req->content_len > part->size) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"size/partition\"}");
+    }
+    esp_ota_handle_t h;
+    if (esp_ota_begin(part, req->content_len, &h) != ESP_OK) return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"begin\"}");
+    char *buf = malloc(4096);
+    int left = req->content_len, ok = buf != NULL;
+    while (ok && left > 0) {
+        int r = httpd_req_recv(req, buf, left < 4096 ? left : 4096);
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (r <= 0 || esp_ota_write(h, buf, r) != ESP_OK) { ok = 0; break; }
+        left -= r;
+    }
+    free(buf);
+    if (!ok) { esp_ota_abort(h); return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"write\"}"); }
+    if (esp_ota_end(h) != ESP_OK || esp_ota_set_boot_partition(part) != ESP_OK)
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"image invalida\"}");
+    httpd_resp_sendstr(req, "{\"ok\":true,\"reboot\":true}");
+    xTaskCreate(reboot_soon, "ota_rb", 2048, NULL, 5, NULL);
+    return ESP_OK;
+}
+
 static esp_err_t hub_post_handler(httpd_req_t *req)
 {
     char body[POST_BODY_MAXLEN];
@@ -380,7 +477,7 @@ httpd_handle_t http_config_server_start(void)
     /* Chat proxies to HA (TLS-free HTTP client + JSON buffers): needs more stack. */
     config.stack_size = 10240;
     config.lru_purge_enable = true;
-    config.max_uri_handlers = 16;
+    config.max_uri_handlers = 24;
 
     if (httpd_start(&server, &config) != ESP_OK) {
         return NULL;
@@ -401,6 +498,11 @@ httpd_handle_t http_config_server_start(void)
         { .uri = "/bot",          .method = HTTP_POST, .handler = bot_post_handler },
         { .uri = "/camera",       .method = HTTP_POST, .handler = camera_post_handler },
         { .uri = "/display",      .method = HTTP_POST, .handler = display_post_handler },
+        { .uri = "/alert",        .method = HTTP_POST, .handler = alert_post_handler },
+        { .uri = "/alerts",       .method = HTTP_GET,  .handler = alerts_get_handler },
+        { .uri = "/config",       .method = HTTP_GET,  .handler = config_get_handler },
+        { .uri = "/config",       .method = HTTP_POST, .handler = config_post_handler },
+        { .uri = "/ota",          .method = HTTP_POST, .handler = ota_post_handler },
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
         httpd_register_uri_handler(server, &uris[i]);

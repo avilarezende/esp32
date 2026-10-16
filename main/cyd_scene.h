@@ -10,6 +10,14 @@
 #define CYD_UI_HOME   1
 #define CYD_UI_SAVER  2
 #define CYD_UI_SLEEP  3
+#define CYD_UI_ALERTS 4
+
+#define CYD_ALERT_ROWS 4
+typedef struct {
+    char title[32];
+    char msg[48];
+    int level; /* 0 info, 1 aviso, 2 critico */
+} cyd_alert_row_t;
 
 #define CYD_ROW_MAX 4
 
@@ -42,6 +50,13 @@ typedef struct {
     int behavior;    /* cat: 0 idle, 1 sleep, 2 stretch, 3 paw, 4 look around */
     int phase;       /* animation step inside the behaviour */
     int test_bars;   /* colour test pattern */
+    int net_state;   /* 0 no Wi-Fi, 1 Wi-Fi without internet, 2 internet ok, 3 unknown */
+    int cat_on;
+    int alert_count; /* badge (alerts + updates) */
+    int updates;
+    int banner;      /* show newest alert banner */
+    cyd_alert_row_t alerts[CYD_ALERT_ROWS];
+    int alert_rows;
 } cyd_scene_t;
 
 /* Camera quick button on the home screen (touch target, screen coords). */
@@ -49,6 +64,13 @@ typedef struct {
 #define CYD_CAMBTN_Y 26
 #define CYD_CAMBTN_W 62
 #define CYD_CAMBTN_H 46
+
+/* Alerts badge (home + rest screens). */
+#define CYD_BADGE_X 196
+#define CYD_BADGE_X_SAVER 4
+#define CYD_BADGE_Y 0
+#define CYD_BADGE_W 52
+#define CYD_BADGE_H 24
 
 /* Paint one horizontal band of the 320x240 scene into `band` (band_h rows). */
 void cyd_scene_paint(uint16_t *band, int y0, int band_h, const cyd_scene_t *scene);

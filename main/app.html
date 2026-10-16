@@ -301,6 +301,30 @@ nav button:active{background:#243044}
         <div class="kv"><span>Clima</span><span id="s-wx">-</span></div>
         <label for="s-bot">Bot principal</label>
         <select id="s-bot"></select>
+        <h1 style="margin-top:20px">Tela do CYD</h1>
+        <label for="c-ents">Dispositivos (entidades, separadas por vírgula)</label><input id="c-ents" autocomplete="off">
+        <label><input type="checkbox" id="c-pets"> Ração de hoje (Spock, Kirk, Gatas)</label>
+        <label for="c-cam_bell">Câmera da campainha</label><input id="c-cam_bell" autocomplete="off">
+        <label for="c-cam_quick">Câmera do botão rápido</label><input id="c-cam_quick" autocomplete="off">
+        <label for="c-btn_label">Rótulo do botão</label><input id="c-btn_label" maxlength="11">
+        <label for="c-btn_icon">Ícone do botão</label><select id="c-btn_icon"><option value="0">Portão</option><option value="1">Câmera</option></select>
+        <label for="c-bell_secs">Campainha: duração (s)</label><input id="c-bell_secs" type="number" min="3" max="120">
+        <label for="c-cam_ms">Atualização da câmera (ms)</label><input id="c-cam_ms" type="number" min="300" max="10000">
+        <label for="c-bright">Brilho (%)</label><input id="c-bright" type="number" min="5" max="100">
+        <label><input type="checkbox" id="c-inv"> Inverter cores</label>
+        <label><input type="checkbox" id="c-bgr"> Ordem BGR (reinicia para aplicar)</label>
+        <label for="c-saver_s">Descanso de tela após (s)</label><input id="c-saver_s" type="number" min="10" max="3600">
+        <label><input type="checkbox" id="c-cat"> Gatinho animado</label>
+        <label><input type="checkbox" id="c-clk24"> Relógio 24 h</label>
+        <label><input type="checkbox" id="c-alerts"> Alertas do HA (faixa e contador)</label>
+        <label for="c-net_url">Teste de internet (URL)</label><input id="c-net_url" autocomplete="off">
+        <button type="button" class="primary" id="c-save" style="margin-top:12px">Salvar ajustes</button>
+        <h1 style="margin-top:20px">Atualizar firmware</h1>
+        <label for="o-key">Chave do dispositivo</label><input id="o-key" type="password" autocomplete="off">
+        <label for="o-file">Arquivo esp32.bin</label><input id="o-file" type="file" accept=".bin">
+        <label for="o-url">ou URL do .bin</label><input id="o-url" placeholder="http://..." autocomplete="off">
+        <button type="button" class="alt" id="o-go" style="margin-top:12px">Enviar atualização</button>
+        <div id="o-msg" class="hint"></div>
         <button type="button" class="alt" id="forget" style="margin-top:16px">Esquecer rede Wi-Fi</button>
       </div>
     </section>
@@ -564,6 +588,27 @@ $('#saver').onclick = function(){ hideSaver(); };
     bump();
   }, {passive:true});
 });
+var CFGK=['ents','pets','cam_bell','cam_quick','btn_label','btn_icon','bell_secs','cam_ms','bright','inv','bgr','saver_s','cat','clk24','alerts','net_url'];
+async function loadCfg(){
+  try{ var c = await (await fetch('/config')).json();
+    CFGK.forEach(function(k){ var el=$('#c-'+k); if(!el) return; if(el.type==='checkbox') el.checked=!!c[k]; else el.value=c[k]; });
+  }catch(e){}
+}
+$('#c-save').onclick = async function(){
+  var p = CFGK.map(function(k){ var el=$('#c-'+k); return encodeURIComponent(k)+'='+encodeURIComponent(el.type==='checkbox'?(el.checked?1:0):el.value); }).join('&');
+  await post('/config', p); this.textContent='Salvo ✓'; var b=this; setTimeout(function(){ b.textContent='Salvar ajustes'; },2000);
+};
+$('#o-go').onclick = async function(){
+  var m=$('#o-msg'), k=encodeURIComponent($('#o-key').value), f=$('#o-file').files[0], u=$('#o-url').value.trim(), r;
+  m.textContent='Enviando… não desligue';
+  try{
+    if (f) r = await fetch('/ota?key='+k, {method:'POST', body:f});
+    else if (u) r = await fetch('/ota?key='+k+'&url='+encodeURIComponent(u), {method:'POST'});
+    else { m.textContent='Escolha um arquivo ou URL'; return; }
+    var j = await r.json(); m.textContent = j.ok ? 'Pronto, reiniciando…' : ('Falhou: '+(j.error||r.status));
+  }catch(e){ m.textContent='Falhou: '+e; }
+};
+loadCfg();
 bump();
 boot();
 </script>

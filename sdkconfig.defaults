@@ -16,4 +16,8 @@ CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
 # The CYD overlay turns it off: ESP-IDF 6 removed the in-tree DP83848 PHY.
 
 # App grew past 1 MB (HA chat + Calico splash): 1.5 MB factory app
-CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+# v4: two OTA slots (1.94 MB each) for cable-free updates; NVS offset unchanged.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_ota.csv"
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y

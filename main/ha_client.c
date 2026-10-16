@@ -292,10 +292,68 @@ __attribute__((unused)) static void build_url(char *url, size_t url_len, const c
     snprintf(url, url_len, "http://%s/api/states", addr);
 }
 
-/* Ask HA to render a tiny summary instead of downloading /api/states (which
- * is hundreds of KB on a real install and was truncated at 48 KB):
- *   T|<temp>|<humidity>   L|<lights on>|<lights total>   D|<name>|<domain>|<state> (x4) */
-static const char HA_SUMMARY_BODY[] = "{\"template\": \"{%- set ts = states.sensor|selectattr('attributes.device_class','eq','temperature')|rejectattr('state','in',['unknown','unavailable'])|list -%}\\n{%- set hs = states.sensor|selectattr('attributes.device_class','eq','humidity')|rejectattr('state','in',['unknown','unavailable'])|list -%}\\n{%- set w = states.weather|list -%}\\nT|{{ (w[0].attributes.temperature if w and w[0].attributes.temperature is number else (ts[0].state if ts else '')) }}|{{ (w[0].attributes.humidity if w and w[0].attributes.humidity is number else (hs[0].state if hs else '')) }}\\n{%- set ds = (states.light|list + states.switch|list)|rejectattr('state','in',['unknown','unavailable'])|sort(attribute='state',reverse=true)|list %}\\nL|{{ states.light|selectattr('state','eq','on')|list|count }}|{{ states.light|rejectattr('state','in',['unknown','unavailable'])|list|count }}\\n{%- for d in ds[:4] %}\\nD|{{ d.name[:17]|replace('|',' ') }}|{{ d.domain }}|{{ d.state }}\\n{%- endfor %}\\n\"}";
+#include "cyd_cfg.h"
+#include "esp_ota_ops.h"
+#include "esp_timer.h"
+
+/* Build the /api/template request from the configured entity list:
+ *   T|temp|hum  D|name|domain|state  P|spock|kirk|gatas  U|updates */
+static int build_summary_body(char *out, size_t n)
+{
+    const cyd_cfg_t *cfg = cyd_cfg();
+    static char tpl[1400];
+    int k = snprintf(tpl, sizeof tpl, "%s",
+        "{%- set ts = states.sensor|selectattr('attributes.device_class','eq','temperature')|rejectattr('state','in',['unknown','unavailable'])|list -%}"
+        "{%- set hs = states.sensor|selectattr('attributes.device_class','eq','humidity')|rejectattr('state','in',['unknown','unavailable'])|list -%}"
+        "{%- set w = states.weather|list -%}"
+        "T|{{ (w[0].attributes.temperature if w and w[0].attributes.temperature is number else (ts[0].state if ts else '')) }}|"
+        "{{ (w[0].attributes.humidity if w and w[0].attributes.humidity is number else (hs[0].state if hs else '')) }}"
+        "{% for e in [");
+    /* entity ids: only [a-z0-9_.] survive, so nothing can break the template */
+    const char *p = cfg->ents;
+    int first = 1;
+    while (*p && k < (int)sizeof tpl - 200) {
+        while (*p == ',' || *p == ' ') p++;
+        char id[72]; int m = 0;
+        while (*p && *p != ',' && m < 71) {
+            char ch = *p++;
+            if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '.') id[m++] = ch;
+        }
+        id[m] = '\0';
+        if (m > 2 && strchr(id, '.')) { k += snprintf(tpl + k, sizeof tpl - k, "%s'%s'", first ? "" : ",", id); first = 0; }
+    }
+    k += snprintf(tpl + k, sizeof tpl - k, "%s",
+        "] %}{% set s = states[e.split('.')[0]][e.split('.')[1]] %}{% if s %}\nD|{{ s.name[:17]|replace('|',' ') }}|{{ s.domain }}|{{ s.state }}{% endif %}{% endfor %}"
+        "\nU|{{ states.update|selectattr('state','eq','on')|list|count }}");
+    if (cfg->pets) {
+        k += snprintf(tpl + k, sizeof tpl - k, "%s",
+            "\nP|{{ states('sensor.alimentacao_spock_hoje') }}|{{ states('sensor.alimentacao_kirk_hoje') }}|{{ states('sensor.alimentacao_gatas_hoje') }}");
+    }
+    char *esc = malloc(sizeof tpl * 2);
+    if (!esc) return -1;
+    size_t o = 0;
+    for (const char *q = tpl; *q && o + 4 < sizeof tpl * 2; q++) {
+        if (*q == '"' || *q == '\\') { esc[o++] = '\\'; esc[o++] = *q; }
+        else if (*q == '\n') { esc[o++] = '\\'; esc[o++] = 'n'; }
+        else esc[o++] = *q;
+    }
+    esc[o] = '\0';
+    int r = snprintf(out, n, "{\"template\":\"%s\"}", esc);
+    free(esc);
+    return r;
+}
+
+static int check_internet(const char *url)
+{
+    if (!url || !url[0]) return -1;
+    esp_http_client_config_t cfg = { .url = url, .method = HTTP_METHOD_GET, .timeout_ms = 4000 };
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (!c) return -1;
+    esp_err_t err = esp_http_client_perform(c);
+    int st = esp_http_client_get_status_code(c);
+    esp_http_client_cleanup(c);
+    return (err == ESP_OK && (st == 204 || st == 200)) ? 1 : 0;
+}
 
 static void parse_summary(ha_snapshot_t *s, char *body)
 {
@@ -310,7 +368,13 @@ static void parse_summary(ha_snapshot_t *s, char *body)
             if (n >= 3 && f[2][0] && isdigit((unsigned char)f[2][0])) { s->humidity = (int)lroundf(strtof(f[2], NULL)); s->has_humidity = 1; }
         } else if (n >= 3 && strcmp(f[0], "L") == 0) {
             s->lights_on = atoi(f[1]); s->lights_total = atoi(f[2]);
+        } else if (n >= 2 && strcmp(f[0], "U") == 0) {
+            s->updates = atoi(f[1]);
+        } else if (n >= 4 && strcmp(f[0], "P") == 0) {
+            s->has_pets = 1;
+            for (int q = 0; q < 3; q++) s->pet[q] = atoi(f[q + 1]);
         } else if (n >= 4 && strcmp(f[0], "D") == 0) {
+            if (s->device_count >= (cyd_cfg()->pets ? HA_DEVICE_MAX - 1 : HA_DEVICE_MAX)) continue;
             int on = strcmp(f[3], "on") == 0 ? 1 : (strcmp(f[3], "off") == 0 ? 0 : -1);
             add_device(s, f[1], on == 1 ? "ligado" : (on == 0 ? "desligado" : f[3]), on);
         }
@@ -352,7 +416,9 @@ static esp_err_t fetch_once(ha_snapshot_t *out)
     if (!client) { free(ctx.body); set_status(out, "offline"); return ESP_FAIL; }
     esp_http_client_set_header(client, "Authorization", auth);
     esp_http_client_set_header(client, "Content-Type", "application/json");
-    esp_http_client_set_post_field(client, HA_SUMMARY_BODY, (int)strlen(HA_SUMMARY_BODY));
+    static char req_body[3200];
+    if (build_summary_body(req_body, sizeof req_body) < 0) { free(ctx.body); esp_http_client_cleanup(client); set_status(out, "sem mem"); return ESP_ERR_NO_MEM; }
+    esp_http_client_set_post_field(client, req_body, (int)strlen(req_body));
     esp_err_t err = esp_http_client_perform(client);
     int status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
@@ -367,6 +433,11 @@ static esp_err_t fetch_once(ha_snapshot_t *out)
     ctx.body[ctx.len] = '\0';
     parse_summary(out, ctx.body);
     free(ctx.body);
+    if (out->has_pets) {
+        char det[HA_DETAIL_MAX];
+        snprintf(det, sizeof det, "S%d K%d G%d", out->pet[0], out->pet[1], out->pet[2]);
+        add_device(out, "Racao hoje", det, -1);
+    }
     out->ready = 1;
     set_status(out, "HA ok");
     ESP_LOGI(TAG, "HA ok: temp=%d hum=%d devices=%d lights=%d/%d",
@@ -380,11 +451,18 @@ static void ha_task(void *arg)
     (void)arg;
     /* First poll soon after STA has an IP. */
     vTaskDelay(pdMS_TO_TICKS(2000));
+    int marked = 0;
     while (1) {
+        if (!marked && wifi_manager_is_connected() && esp_timer_get_time() > 60000000LL) {
+            esp_ota_mark_app_valid_cancel_rollback();   /* new OTA image survived 60 s with Wi-Fi */
+            marked = 1;
+        }
         if (wifi_manager_is_connected()) {
             ha_snapshot_t next;
             esp_err_t err = fetch_once(&next);
+            next.internet = check_internet(cyd_cfg()->net_url);
             snap_lock();
+            s_snap.internet = next.internet;
             if (err == ESP_OK || next.configured) {
                 s_snap = next;
             } else if (!s_snap.configured) {
@@ -397,6 +475,7 @@ static void ha_task(void *arg)
             snap_unlock();
         } else {
             snap_lock();
+            s_snap.internet = 0;
             if (!assistant_hub_configured()) {
                 memset(&s_snap, 0, sizeof s_snap);
                 snprintf(s_snap.place, sizeof s_snap.place, "Casa");

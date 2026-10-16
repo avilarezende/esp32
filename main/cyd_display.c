@@ -24,6 +24,8 @@
 #include "cyd_scene.h"
 #include "cyd_camera.h"
 #include "nvs.h"
+#include "cyd_cfg.h"
+#include "driver/ledc.h"
 #include "esp_random.h"
 #include "ha_client.h"
 #include "wifi_manager.h"
@@ -45,7 +47,7 @@ static const char *TAG = "cyd";
 #define LCD_HOST   SPI2_HOST
 #define TOUCH_HOST SPI3_HOST
 #define BAND_H     20
-#define SAVER_MS   30000LL
+#define SAVER_MS   ((int64_t)cyd_cfg()->saver_s * 1000LL)
 #define SLEEP_MS   (40LL * 60LL * 1000LL)
 
 static esp_lcd_panel_handle_t s_panel;
@@ -59,16 +61,128 @@ static char s_cam_entity[64];
 static int s_cam_secs;
 static volatile int64_t s_test_until;
 
-static uint8_t cfg_u8(const char *key, uint8_t def)
+static int s_bl_ready;
+static void bl_set(int on)
 {
-    nvs_handle_t h;
-    uint8_t v = def;
-    if (nvs_open("app_cfg", NVS_READONLY, &h) == ESP_OK) {
-        nvs_get_u8(h, key, &v);
-        nvs_close(h);
+    if (!s_bl_ready) {
+        ledc_timer_config_t t = { .speed_mode = LEDC_LOW_SPEED_MODE, .duty_resolution = LEDC_TIMER_8_BIT,
+                                  .timer_num = LEDC_TIMER_1, .freq_hz = 5000, .clk_cfg = LEDC_AUTO_CLK };
+        ledc_channel_config_t ch = { .gpio_num = PIN_LCD_BL, .speed_mode = LEDC_LOW_SPEED_MODE,
+                                     .channel = LEDC_CHANNEL_1, .timer_sel = LEDC_TIMER_1, .duty = 0 };
+        if (ledc_timer_config(&t) == ESP_OK && ledc_channel_config(&ch) == ESP_OK) s_bl_ready = 1;
     }
-    return v;
+    if (!s_bl_ready) { gpio_set_level(PIN_LCD_BL, on ? 1 : 0); return; }
+    int pct = cyd_cfg()->bright;
+    ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, on ? (uint32_t)(pct * 255 / 100) : 0);
+    ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
 }
+
+/* ---- Alerts (pushed by HA via POST /alert) ---- */
+#define ALERT_MAX 8
+typedef struct { char id[32]; char title[32]; char msg[48]; int level; int64_t expires; int64_t created; } alert_t;
+static alert_t s_alerts[ALERT_MAX];
+static portMUX_TYPE s_al_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile int s_alert_wake;
+
+/* Panel font is ASCII: fold common pt-BR accents. */
+static void ascii_fold(const char *in, char *out, size_t n)
+{
+    size_t o = 0;
+    const unsigned char *p = (const unsigned char *)in;
+    while (*p && o + 1 < n) {
+        if (*p < 0x80) { out[o++] = (*p >= 0x20) ? (char)*p : ' '; p++; continue; }
+        if ((*p == 0xC3) && p[1]) {
+            unsigned char c = p[1]; char r = '?';
+            if (c >= 0x80 && c <= 0x85) r = 'A'; else if (c == 0x87) r = 'C'; else if (c >= 0x88 && c <= 0x8B) r = 'E';
+            else if (c >= 0x8C && c <= 0x8F) r = 'I'; else if (c >= 0x92 && c <= 0x96) r = 'O'; else if (c >= 0x99 && c <= 0x9C) r = 'U';
+            else if (c >= 0xA0 && c <= 0xA5) r = 'a'; else if (c == 0xA7) r = 'c'; else if (c >= 0xA8 && c <= 0xAB) r = 'e';
+            else if (c >= 0xAC && c <= 0xAF) r = 'i'; else if (c >= 0xB2 && c <= 0xB6) r = 'o'; else if (c >= 0xB9 && c <= 0xBC) r = 'u';
+            out[o++] = r; p += 2; continue;
+        }
+        p++;
+        while ((*p & 0xC0) == 0x80) p++;   /* skip other multibyte chars */
+    }
+    out[o] = '\0';
+}
+
+void cyd_alert_push(const char *id, const char *title, const char *msg, int level, int secs)
+{
+    alert_t a = {0};
+    snprintf(a.id, sizeof a.id, "%s", (id && id[0]) ? id : "");
+    ascii_fold(title ? title : "", a.title, sizeof a.title);
+    ascii_fold(msg ? msg : "", a.msg, sizeof a.msg);
+    a.level = level < 0 ? 0 : (level > 2 ? 2 : level);
+    a.created = esp_timer_get_time();
+    a.expires = secs > 0 ? a.created + (int64_t)secs * 1000000 : 0;
+    if (!a.id[0]) snprintf(a.id, sizeof a.id, "a%lld", (long long)(a.created / 1000));
+    portENTER_CRITICAL(&s_al_mux);
+    int slot = -1, oldest = 0;
+    for (int i = 0; i < ALERT_MAX; i++) {
+        if (s_alerts[i].created && strcmp(s_alerts[i].id, a.id) == 0) { slot = i; break; }
+        if (!s_alerts[i].created && slot < 0) slot = i;
+        if (s_alerts[i].created < s_alerts[oldest].created) oldest = i;
+    }
+    if (slot < 0) slot = oldest;
+    s_alerts[slot] = a;
+    portEXIT_CRITICAL(&s_al_mux);
+    s_alert_wake = 1;
+}
+
+void cyd_alert_dismiss(const char *id)
+{
+    portENTER_CRITICAL(&s_al_mux);
+    for (int i = 0; i < ALERT_MAX; i++) {
+        if (!id || !id[0] || strcmp(s_alerts[i].id, id) == 0) memset(&s_alerts[i], 0, sizeof s_alerts[i]);
+    }
+    portEXIT_CRITICAL(&s_al_mux);
+}
+
+void cyd_alerts_json(char *buf, size_t n)
+{
+    alert_t cp[ALERT_MAX];
+    portENTER_CRITICAL(&s_al_mux);
+    memcpy(cp, s_alerts, sizeof cp);
+    portEXIT_CRITICAL(&s_al_mux);
+    int k = snprintf(buf, n, "[");
+    int first = 1;
+    for (int i = 0; i < ALERT_MAX && k < (int)n - 200; i++) {
+        if (!cp[i].created) continue;
+        k += snprintf(buf + k, n - k, "%s{\"id\":\"%s\",\"title\":\"%s\",\"message\":\"%s\",\"level\":%d}",
+                      first ? "" : ",", cp[i].id, cp[i].title, cp[i].msg, cp[i].level);
+        first = 0;
+    }
+    snprintf(buf + k, n - k, "]");
+}
+
+/* Newest first into the scene; drops expired alerts. Returns ids for taps. */
+static int fill_alerts(cyd_scene_t *sc, char ids[CYD_ALERT_ROWS][32])
+{
+    int64_t now = esp_timer_get_time();
+    alert_t cp[ALERT_MAX];
+    portENTER_CRITICAL(&s_al_mux);
+    for (int i = 0; i < ALERT_MAX; i++) {
+        if (s_alerts[i].created && s_alerts[i].expires && now > s_alerts[i].expires) memset(&s_alerts[i], 0, sizeof s_alerts[i]);
+    }
+    memcpy(cp, s_alerts, sizeof cp);
+    portEXIT_CRITICAL(&s_al_mux);
+    int count = 0;
+    for (int r = 0; r < CYD_ALERT_ROWS; r++) {
+        int best = -1;
+        for (int i = 0; i < ALERT_MAX; i++) if (cp[i].created && (best < 0 || cp[i].created > cp[best].created)) best = i;
+        if (best < 0) break;
+        snprintf(sc->alerts[r].title, sizeof sc->alerts[r].title, "%s", cp[best].title);
+        snprintf(sc->alerts[r].msg, sizeof sc->alerts[r].msg, "%s", cp[best].msg);
+        sc->alerts[r].level = cp[best].level;
+        if (ids) snprintf(ids[r], 32, "%s", cp[best].id);
+        if (r == 0) sc->banner = (now - cp[best].created) < 15000000LL;
+        cp[best].created = 0;
+        count++;
+    }
+    for (int i = 0; i < ALERT_MAX; i++) if (cp[i].created) count++;
+    sc->alert_rows = count < CYD_ALERT_ROWS ? count : CYD_ALERT_ROWS;
+    return count;
+}
+
 
 /* DRAM, not the heap. On ESP-IDF 6, MALLOC_CAP_INTERNAL can return 32-bit
  * IRAM; a uint16 store there is a LoadStoreError and reboots the chip. */
@@ -172,7 +286,7 @@ static void set_screen(int on)
     if (s_panel) {
         esp_lcd_panel_disp_on_off(s_panel, on);
     }
-    gpio_set_level(PIN_LCD_BL, on ? 1 : 0);
+    bl_set(on);
     ESP_LOGI(TAG, "panel %s", on ? "on" : "sleep");
 }
 
@@ -262,9 +376,9 @@ static esp_err_t panel_bringup(void)
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = -1,
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
-        .rgb_ele_order = cfg_u8("disp_bgr", 1) ? LCD_RGB_ELEMENT_ORDER_BGR : LCD_RGB_ELEMENT_ORDER_RGB,
+        .rgb_ele_order = cyd_cfg()->bgr ? LCD_RGB_ELEMENT_ORDER_BGR : LCD_RGB_ELEMENT_ORDER_RGB,
 #else
-        .rgb_endian = cfg_u8("disp_bgr", 1) ? LCD_RGB_ENDIAN_BGR : LCD_RGB_ENDIAN_RGB,
+        .rgb_endian = cyd_cfg()->bgr ? LCD_RGB_ENDIAN_BGR : LCD_RGB_ENDIAN_RGB,
 #endif
         .bits_per_pixel = 16,
     };
@@ -285,7 +399,7 @@ static esp_err_t panel_bringup(void)
         err = esp_lcd_panel_mirror(s_panel, false, false);
     }
     if (err == ESP_OK) {
-        err = esp_lcd_panel_invert_color(s_panel, cfg_u8("disp_inv", 1) != 0);
+        err = esp_lcd_panel_invert_color(s_panel, cyd_cfg()->inv != 0);
     }
     if (err == ESP_OK) {
         err = esp_lcd_panel_disp_on_off(s_panel, true);
@@ -324,7 +438,7 @@ static esp_err_t panel_bringup(void)
     };
     gpio_config(&irq);
 
-    gpio_set_level(PIN_LCD_BL, 1);
+    bl_set(1);
     ESP_LOGI(TAG, "CYD panel ready (320x240)");
     return ESP_OK;
 }
@@ -366,7 +480,7 @@ static void run_camera(const char *entity, int secs)
         }
         free(jpg);
         /* ~1 frame per second; a new tap closes the viewer. */
-        while ((esp_timer_get_time() - t0) < 1000000) {
+        while ((esp_timer_get_time() - t0) < (int64_t)cyd_cfg()->cam_ms * 1000) {
             if (touch_down()) {
                 wait_release(1500);
                 return;
@@ -392,15 +506,16 @@ void cyd_display_show_camera(const char *entity, int seconds)
     portEXIT_CRITICAL(&s_cam_mux);
 }
 
+void cyd_display_apply_cfg(void)
+{
+    if (s_panel) esp_lcd_panel_invert_color(s_panel, cyd_cfg()->inv != 0);
+    if (s_screen_on) bl_set(1);
+}
+
 void cyd_display_set_color(int invert, int bgr, int test)
 {
-    nvs_handle_t h;
-    if ((invert >= 0 || bgr >= 0) && nvs_open("app_cfg", NVS_READWRITE, &h) == ESP_OK) {
-        if (invert >= 0) nvs_set_u8(h, "disp_inv", invert ? 1 : 0);
-        if (bgr >= 0) nvs_set_u8(h, "disp_bgr", bgr ? 1 : 0);
-        nvs_commit(h);
-        nvs_close(h);
-    }
+    if (invert >= 0) cyd_cfg_set_u8("disp_inv", invert ? 1 : 0);
+    if (bgr >= 0) cyd_cfg_set_u8("disp_bgr", bgr ? 1 : 0);
     if (invert >= 0 && s_panel) esp_lcd_panel_invert_color(s_panel, invert != 0);
     if (test) s_test_until = esp_timer_get_time() + 15000000LL;
 }
@@ -414,6 +529,10 @@ static void display_task(void *arg)
     int last_mode = -1;
     int behavior = 0, beh_start = 0, beh_len = 24;
     int was_down = 0;
+    int alerts_view = 0;
+    int64_t alerts_since = 0;
+    char alert_ids[CYD_ALERT_ROWS][32];
+    memset(alert_ids, 0, sizeof alert_ids);
 
     while (1) {
         maybe_sntp();
@@ -435,17 +554,45 @@ static void display_task(void *arg)
             was_down = 0;
         }
 
-        int tx = 0, ty = 0;
+        if (s_alert_wake) {
+            s_alert_wake = 0;
+            if (cyd_cfg()->alerts) {
+                idle_since = esp_timer_get_time();
+                if (!s_screen_on) set_screen(1);
+            }
+        }
+
+        int tx = -1, ty = -1;
         int down = touch_xy(&tx, &ty) || touch_down();
         if (down) {
-            int woke = !s_screen_on || last_mode != CYD_UI_HOME;
+            int on_saver = last_mode == CYD_UI_SAVER;
+            int woke = !s_screen_on || (last_mode != CYD_UI_HOME && last_mode != CYD_UI_ALERTS);
             idle_since = esp_timer_get_time();
             if (!s_screen_on) {
                 set_screen(1);
             }
-            if (!was_down && !woke && tx >= CYD_CAMBTN_X - 10 && ty <= CYD_CAMBTN_Y + CYD_CAMBTN_H + 10 &&
+            int bx = on_saver ? CYD_BADGE_X_SAVER : CYD_BADGE_X;
+            if (!was_down && alerts_view) {
+                alerts_since = esp_timer_get_time();
+                if (ty >= 0 && ty < 36) {
+                    alerts_view = 0;
+                } else if (ty >= 40) {
+                    int row = (ty - 40) / 46;
+                    if (row >= 0 && row < CYD_ALERT_ROWS && alert_ids[row][0]) cyd_alert_dismiss(alert_ids[row]);
+                }
+                was_down = 1;
+                continue;
+            }
+            if (!was_down && (last_mode == CYD_UI_HOME || on_saver) && tx >= bx && tx < bx + CYD_BADGE_W + 8 &&
+                ty >= 0 && ty < CYD_BADGE_Y + CYD_BADGE_H + 8) {
+                alerts_view = 1;
+                alerts_since = esp_timer_get_time();
+                was_down = 1;
+                continue;
+            }
+            if (!was_down && !woke && tx >= CYD_CAMBTN_X - 10 && ty >= 0 && ty <= CYD_CAMBTN_Y + CYD_CAMBTN_H + 10 &&
                 wifi_manager_is_connected()) {
-                cyd_display_show_camera("camera.frigate_frente_direita", 20);
+                cyd_display_show_camera(cyd_cfg()->cam_quick, cyd_cfg()->bell_secs);
                 was_down = 1;
                 continue;
             }
@@ -469,7 +616,25 @@ static void display_task(void *arg)
         scene.test_bars = esp_timer_get_time() < s_test_until;
         scene.blink = ((frame % 16) >= 14);
         fill_time(&scene);
+        if (!cyd_cfg()->clk24 && scene.time_valid) {
+            scene.hour = scene.hour % 12;
+            if (scene.hour == 0) scene.hour = 12;
+        }
         fill_from_ha(&scene);
+        scene.cat_on = cyd_cfg()->cat;
+        {
+            ha_snapshot_t hs;
+            ha_client_copy(&hs);
+            scene.updates = hs.updates;
+            if (!wifi_manager_is_connected()) scene.net_state = 0;
+            else if (hs.internet == 1) scene.net_state = 2;
+            else if (hs.internet == 0) scene.net_state = 1;
+            else scene.net_state = 3;
+        }
+        if (cyd_cfg()->alerts) {
+            int n = fill_alerts(&scene, alert_ids);
+            scene.alert_count = n + scene.updates;
+        }
         if (!scene.has_temp && !scene.has_humidity && scene.row_count == 0 &&
             strcmp(scene.status, "HA ok") != 0) {
             /* Keep the glanceable numbers until HA answers. */
@@ -508,6 +673,11 @@ static void display_task(void *arg)
             if (!s_screen_on) {
                 set_screen(1);
             }
+        }
+        if (alerts_view && (esp_timer_get_time() - alerts_since) > 30000000LL) alerts_view = 0;
+        if (alerts_view && wifi_manager_is_connected()) {
+            scene.mode = CYD_UI_ALERTS;
+            idle_since = esp_timer_get_time();
         }
 
         if (scene.mode == CYD_UI_SLEEP) {
@@ -553,6 +723,13 @@ esp_err_t cyd_display_start(void)
 }
 
 #else /* !CONFIG_APP_ENABLE_CYD */
+#include <stdio.h>
+
+void cyd_display_apply_cfg(void) {}
+void cyd_alert_push(const char *id, const char *title, const char *msg, int level, int secs) { (void)id; (void)title; (void)msg; (void)level; (void)secs; }
+void cyd_alert_dismiss(const char *id) { (void)id; }
+void cyd_alerts_json(char *buf, size_t n) { if (n) snprintf(buf, n, "[]"); }
+
 
 void cyd_display_show_camera(const char *entity, int seconds) { (void)entity; (void)seconds; }
 void cyd_display_set_color(int invert, int bgr, int test) { (void)invert; (void)bgr; (void)test; }

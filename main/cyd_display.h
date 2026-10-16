@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include "esp_err.h"
 
 /* Start the CYD panel task when CONFIG_APP_ENABLE_CYD is set. */
@@ -12,3 +13,12 @@ void cyd_display_show_camera(const char *entity, int seconds);
 /* Panel colour options, saved in NVS. invert applies at once; bgr needs a
  * reboot. test=1 shows colour bars (red, green, blue, white, black) for 15 s. */
 void cyd_display_set_color(int invert, int bgr, int test);
+
+/* Re-apply settings from cyd_cfg() (inversion, brightness). */
+void cyd_display_apply_cfg(void);
+
+/* Alerts shown as banner + badge; level 0 info, 1 warning, 2 critical;
+ * secs 0 = until dismissed. Same id replaces. dismiss(NULL/"") clears all. */
+void cyd_alert_push(const char *id, const char *title, const char *msg, int level, int secs);
+void cyd_alert_dismiss(const char *id);
+void cyd_alerts_json(char *buf, size_t n);

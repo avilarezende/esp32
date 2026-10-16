@@ -31,6 +31,10 @@ typedef struct {
     ha_device_t devices[HA_DEVICE_MAX];
     char place[16];
     char status[20];
+    int internet;     /* 1 ok, 0 failed, -1 unknown */
+    int updates;      /* update.* entities with an update available */
+    int has_pets;
+    int pet[3];       /* today's portions: Spock, Kirk, Gatas */
 } ha_snapshot_t;
 
 /* Start the background poller (no-op when CYD is disabled). */

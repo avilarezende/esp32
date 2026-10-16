@@ -1,4 +1,6 @@
+#include <stdio.h>
 #include "cyd_scene.h"
+#include "cyd_cfg.h"
 
 #include <string.h>
 
@@ -644,11 +646,21 @@ static void cam_button(canvas_t *c)
     int x = CYD_CAMBTN_X, y = CYD_CAMBTN_Y, w = CYD_CAMBTN_W, h = CYD_CAMBTN_H;
     fill_rect(c, x, y, w, h, c->muted);
     fill_rect(c, x + 2, y + 2, w - 4, h - 4, c->bg);
-    /* camera glyph */
-    fill_rect(c, x + 14, y + 10, 26, 16, c->warm);
-    fill_tri(c, x + 40, y + 18, x + 50, y + 11, x + 50, y + 25, c->warm);
-    fill_disc(c, x + 27, y + 18, 4, c->bg);
-    text(c, x + (w - text_px("cam D", 1)) / 2, y + h - 14, 1, "cam D", c->white);
+    const cyd_cfg_t *cfg = cyd_cfg();
+    if (cfg->btn_icon == 1) {
+        fill_rect(c, x + 14, y + 10, 26, 16, c->warm);
+        fill_tri(c, x + 40, y + 18, x + 50, y + 11, x + 50, y + 25, c->warm);
+        fill_disc(c, x + 27, y + 18, 4, c->bg);
+    } else {
+        /* gate (portao): two posts, top/bottom rails, vertical bars */
+        fill_rect(c, x + 12, y + 6, 4, 24, c->warm);
+        fill_rect(c, x + w - 16, y + 6, 4, 24, c->warm);
+        fill_rect(c, x + 16, y + 10, w - 32, 2, c->warm);
+        fill_rect(c, x + 16, y + 26, w - 32, 2, c->warm);
+        for (int bx = x + 20; bx < x + w - 18; bx += 5) fill_rect(c, bx, y + 10, 2, 18, c->warm);
+    }
+    const char *lb = cfg->btn_label[0] ? cfg->btn_label : "Porta";
+    text(c, x + (w - text_px(lb, 1)) / 2, y + h - 14, 1, lb, c->white);
 }
 
 static void test_bars(canvas_t *c)
@@ -659,6 +671,81 @@ static void test_bars(canvas_t *c)
         fill_rect(c, 0, i * 48, CYD_W, 48, col[i]);
         text(c, 10, i * 48 + 16, 2, lbl[i], i == 3 ? 0 : rgb565(255, 255, 255));
     }
+}
+
+
+/* ---- Connectivity icon, alerts badge/banner/list ---- */
+static void arc_pts(canvas_t *c, int cx, int cy, int r, int th, uint16_t col)
+{
+    for (int dy = -r - th; dy <= 0; dy++) {
+        for (int dx = -r - th; dx <= r + th; dx++) {
+            int d2 = dx * dx + dy * dy;
+            if (d2 >= r * r && d2 <= (r + th) * (r + th) && -dy >= (dx < 0 ? -dx : dx)) plot(c, cx + dx, cy + dy, col);
+        }
+    }
+}
+
+static void wifi_icon(canvas_t *c, int x, int y, int state)
+{
+    uint16_t ok = rgb565(34, 197, 94), dim = rgb565(71, 85, 105), red = rgb565(239, 68, 68);
+    uint16_t col = state == 2 ? ok : (state == 3 ? c->muted : dim);
+    int cx = x + 14, cy = y + 20;
+    arc_pts(c, cx, cy, 4, 2, col);
+    arc_pts(c, cx, cy, 9, 2, col);
+    arc_pts(c, cx, cy, 14, 2, col);
+    fill_disc(c, cx, cy, 2, col);
+    if (state == 0 || state == 1) {
+        for (int t = -1; t <= 1; t++) {
+            line(c, x + 16 + t, y + 8, x + 28 + t, y + 20, red);
+            line(c, x + 28 + t, y + 8, x + 16 + t, y + 20, red);
+        }
+    }
+}
+
+static uint16_t level_col(canvas_t *c, int level)
+{
+    (void)c;
+    return level >= 2 ? rgb565(220, 38, 38) : (level == 1 ? rgb565(217, 119, 6) : rgb565(37, 99, 235));
+}
+
+static void alert_badge(canvas_t *c, const cyd_scene_t *s, int bx)
+{
+    if (s->alert_count <= 0) return;
+    char t[12];
+    snprintf(t, sizeof t, "! %d", s->alert_count > 99 ? 99 : s->alert_count);
+    int lvl = s->alert_rows > 0 ? s->alerts[0].level : 0;
+    fill_rect(c, bx, CYD_BADGE_Y + 2, CYD_BADGE_W, CYD_BADGE_H - 4, level_col(c, lvl));
+    text(c, bx + (CYD_BADGE_W - text_px(t, 1)) / 2, CYD_BADGE_Y + 8, 1, t, c->white);
+}
+
+static void alert_banner(canvas_t *c, const cyd_scene_t *s)
+{
+    if (!s->banner || s->alert_rows <= 0) return;
+    const cyd_alert_row_t *a = &s->alerts[0];
+    fill_rect(c, 0, 196, CYD_W, 44, level_col(c, a->level));
+    text(c, 6, 202, 1, a->title, c->white);
+    text(c, 6, 220, 1, a->msg, c->white);
+}
+
+static void paint_alerts(canvas_t *c, const cyd_scene_t *s)
+{
+    text(c, 8, 8, 2, "Alertas", c->white);
+    text(c, CYD_W - text_px("fechar X", 1) - 8, 12, 1, "fechar X", c->muted);
+    fill_rect(c, 8, 34, CYD_W - 16, 1, c->muted);
+    int y = 40;
+    if (s->updates > 0) {
+        char u[40];
+        snprintf(u, sizeof u, "%d atualizacao(oes) no HA", s->updates);
+        text(c, 12, y + 4, 1, u, c->warm);
+        y += 24;
+    }
+    if (s->alert_rows == 0 && s->updates == 0) text_center(c, 110, 1, "nenhum alerta", c->muted);
+    for (int i = 0; i < s->alert_rows && y < 230; i++, y += 46) {
+        fill_rect(c, 8, y, 4, 40, level_col(c, s->alerts[i].level));
+        text(c, 18, y + 4, 1, s->alerts[i].title, c->white);
+        text(c, 18, y + 22, 1, s->alerts[i].msg, c->muted);
+    }
+    text(c, 8, 228, 1, "toque no alerta para dispensar", c->muted);
 }
 
 static void paint_portal(canvas_t *c)
@@ -761,8 +848,11 @@ static void paint_saver(canvas_t *c, const cyd_scene_t *scene)
     }
     weather_pair(c, 96, 96, 2, scene->temp_c, scene->humidity);
     /* 2/3 of the web viewBox: about 107x93, same patches as the SVG. */
-    kitten_act(c, 106, 118, 2, 3, scene);
+    if (scene->cat_on) kitten_act(c, 106, 118, 2, 3, scene);
     text_center(c, 224, 1, "toque na tela", c->muted);
+    wifi_icon(c, CYD_W - 36, 2, scene->net_state);
+    alert_badge(c, scene, 4);
+    alert_banner(c, scene);
 }
 
 static void paint_home(canvas_t *c, const cyd_scene_t *scene)
@@ -830,7 +920,7 @@ static void paint_home(canvas_t *c, const cyd_scene_t *scene)
             text_center(c, 110, 1, "erro ao ler o HA:", c->muted);
             text_center(c, 128, 1, scene->status, c->muted);
         }
-        kitten_act(c, 112, 148, 1, 2, scene);
+        if (scene->cat_on) kitten_act(c, 112, 148, 1, 2, scene);
     } else {
         for (int i = 0; i < scene->row_count && i < CYD_ROW_MAX; i++) {
             int y = 88 + i * 28;
@@ -852,11 +942,13 @@ static void paint_home(canvas_t *c, const cyd_scene_t *scene)
 
     text_center(c, 224, 1, "40 min sem toque: tela off", c->muted);
     if (scene->row_count > 0) {
-        kitten_act(c, 268, 200, 1, 4, scene);
+        if (scene->cat_on) kitten_act(c, 268, 200, 1, 4, scene);
     }
     if (scene->cam_btn) {
         cam_button(c);
     }
+    alert_badge(c, scene, CYD_BADGE_X);
+    alert_banner(c, scene);
 }
 
 static void paint_sleep(canvas_t *c)
@@ -895,6 +987,8 @@ void cyd_scene_paint(uint16_t *band, int y0, int band_h, const cyd_scene_t *scen
         paint_portal(&c);
     } else if (scene->mode == CYD_UI_SAVER) {
         paint_saver(&c, scene);
+    } else if (scene->mode == CYD_UI_ALERTS) {
+        paint_alerts(&c, scene);
     } else {
         paint_home(&c, scene);
     }
