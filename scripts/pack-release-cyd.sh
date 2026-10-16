@@ -20,7 +20,15 @@ mkdir -p release/cyd
 cp -f build_cyd/bootloader/bootloader.bin release/cyd/bootloader.bin
 cp -f build_cyd/partition_table/partition-table.bin release/cyd/partition-table.bin
 cp -f build_cyd/esp32.bin release/cyd/esp32.bin
-(cd release/cyd && sha256sum bootloader.bin partition-table.bin esp32.bin > SHA256SUMS)
+
+# Single image at 0x0 for web flashers (ESP Web Tools / esptool-js).
+python -m esptool --chip esp32 merge_bin -o release/cyd/firmware-cyd.bin \
+  --flash_mode dio --flash_freq 40m --flash_size 4MB \
+  0x1000 release/cyd/bootloader.bin \
+  0x8000 release/cyd/partition-table.bin \
+  0x10000 release/cyd/esp32.bin
+
+(cd release/cyd && sha256sum bootloader.bin partition-table.bin esp32.bin firmware-cyd.bin > SHA256SUMS)
 chmod +x release/cyd/flash.sh scripts/pack-release-cyd.sh
 
 echo "Updated release/cyd:"

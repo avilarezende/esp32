@@ -94,6 +94,7 @@ idf.py -B build_cyd -p PORTA flash monitor
 
 ## Pacote pronto para gravar
 
-A pasta [`release/cyd/`](../release/cyd/) traz os três binários já compilados e
-scripts `flash.bat` / `flash.sh`. Não é preciso compilar o projeto para só
-atualizar a placa.
+A pasta [`release/cyd/`](../release/cyd/) traz **`firmware-cyd.bin`** (imagem
+única em `0x0`, ideal para [esptool-js](https://espressif.github.io/esptool-js/)),
+os três binários separados e scripts `flash.bat` / `flash.sh`. Não é preciso
+compilar o projeto para só atualizar a placa.

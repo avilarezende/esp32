@@ -13,6 +13,18 @@ código**.
 
 ## Caminho A — pacote pronto (sem compilar)
 
+### A1 — um único `.bin` pela web (mais simples)
+
+1. Baixe [`release/cyd/firmware-cyd.bin`](../release/cyd/firmware-cyd.bin)
+   (imagem completa: bootloader + partições + app).
+2. No Chrome ou Edge, abra <https://espressif.github.io/esptool-js/>.
+3. Ligue o CYD no USB → **Connect** → escolha a porta serial.
+4. Flash address `0x0`, selecione `firmware-cyd.bin` → **Program**.
+
+Não precisa instalar ESP-IDF. Use cabo USB de **dados**.
+
+### A2 — scripts no terminal
+
 1. Clone ou baixe o repositório e abra a pasta `release/cyd/`.
 2. Instale o [ESP-IDF](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/)
    (atalho **ESP-IDF PowerShell** / **ESP-IDF CMD** no Windows) **ou** o
@@ -40,6 +52,12 @@ código**.
    ```bash
    chmod +x flash.sh
    ./flash.sh /dev/ttyUSB0
+   ```
+
+   Ou a imagem única:
+
+   ```bash
+   python -m esptool --chip esp32 write_flash --flash_mode dio --flash_size 4MB --flash_freq 40m 0x0 firmware-cyd.bin
    ```
 
 5. Abra o monitor serial (opcional):
