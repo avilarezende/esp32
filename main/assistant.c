@@ -9,6 +9,7 @@
 
 #include "wifi_manager.h"
 #include "wifi_form.h"
+#include "ha_client.h"
 
 static const char *TAG = "assistant";
 
@@ -220,7 +221,7 @@ void assistant_chat_reply(const char *message, char *out, size_t out_len)
     get_str(K_BOT_PRIN, principal, sizeof(principal));
     const char *name = bot_name(principal[0] ? principal : BOTS[0].id);
 
-    char msg[160];
+    char msg[192];
     strlcpy(msg, message ? message : "", sizeof(msg));
 
 #if CONFIG_APP_BOT_BACKEND_MOCK
@@ -232,7 +233,6 @@ void assistant_chat_reply(const char *message, char *out, size_t out_len)
                          : "Conecte um hub para eu controlar seus dispositivos.");
 #else
     (void)name;
-    snprintf(out, out_len,
-             "Backend real do Grok ainda nao configurado. Ative as credenciais para conversar.");
+    ha_client_conversation(msg, out, out_len);
 #endif
 }

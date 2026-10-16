@@ -9,6 +9,8 @@ extern "C" {
 #endif
 
 #define ASSISTANT_STR_MAX 64
+/* HA long-lived tokens are ~183 chars (JWT); leave headroom. */
+#define ASSISTANT_TOKEN_MAX 320
 
 /*
  * Assistant / smart-home layer.

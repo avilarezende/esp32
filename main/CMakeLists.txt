@@ -6,6 +6,7 @@ idf_component_register(SRCS "main.c"
                             "ha_client.c"
                             "cyd_scene.c"
                             "cyd_display.c"
+                            "cyd_splash.c"
                        INCLUDE_DIRS "."
                        EMBED_TXTFILES "app.html"
                        REQUIRES spi_flash

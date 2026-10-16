@@ -38,6 +38,13 @@ esp_err_t ha_client_start(void);
 /* Copy the latest snapshot under the poller lock. */
 void ha_client_copy(ha_snapshot_t *out);
 
+/* Send `text` to Home Assistant's conversation API (POST
+ * /api/conversation/process, language pt-BR) with the saved hub address and
+ * long-lived token, and copy the spoken reply into `out` (plain UTF-8).
+ * Always writes a human-readable message, also on errors. Keeps the
+ * conversation_id between calls so follow-ups have context. */
+void ha_client_conversation(const char *text, char *out, size_t out_len);
+
 #ifdef __cplusplus
 }
 #endif

@@ -296,7 +296,8 @@ static esp_err_t fetch_once(ha_snapshot_t *out)
     char type[ASSISTANT_STR_MAX] = {0};
     char addr[ASSISTANT_STR_MAX] = {0};
     char user[ASSISTANT_STR_MAX] = {0};
-    char pass[ASSISTANT_STR_MAX] = {0};
+    static char pass[ASSISTANT_TOKEN_MAX];
+    pass[0] = '\0';
     assistant_get_hub(type, sizeof type, addr, sizeof addr, user, sizeof user, pass, sizeof pass);
     (void)user;
 
@@ -329,7 +330,7 @@ static esp_err_t fetch_once(ha_snapshot_t *out)
     }
     ctx.body[0] = '\0';
 
-    char auth[ASSISTANT_STR_MAX + 24];
+    static char auth[ASSISTANT_TOKEN_MAX + 24];
     snprintf(auth, sizeof auth, "Bearer %s", pass);
 
     esp_http_client_config_t cfg = {
@@ -441,4 +442,129 @@ void ha_client_copy(ha_snapshot_t *out)
     snap_lock();
     *out = s_snap;
     snap_unlock();
+}
+
+
+/* ---- Conversation (chat) ---- */
+
+#define CONV_BODY_CAP 4096
+static char s_conv_id[64];
+
+static void json_escape_into(const char *in, char *out, size_t out_len)
+{
+    size_t o = 0;
+    for (const unsigned char *p = (const unsigned char *)in; *p && o + 7 < out_len; p++) {
+        if (*p == '"' || *p == '\\') { out[o++] = '\\'; out[o++] = (char)*p; }
+        else if (*p == '\n') { out[o++] = '\\'; out[o++] = 'n'; }
+        else if (*p == '\r' || *p == '\t') { out[o++] = ' '; }
+        else if (*p < 0x20) { o += (size_t)snprintf(out + o, out_len - o, "\\u%04x", *p); }
+        else out[o++] = (char)*p;
+    }
+    out[o] = '\0';
+}
+
+static int hexv(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* Decode the JSON string that starts right after the opening quote at `p`. */
+static void json_unescape(const char *p, char *out, size_t out_len)
+{
+    size_t o = 0;
+    while (*p && *p != '"' && o + 4 < out_len) {
+        if (*p != '\\') { out[o++] = *p++; continue; }
+        p++;
+        switch (*p) {
+        case 'n': out[o++] = '\n'; p++; break;
+        case 't': out[o++] = ' '; p++; break;
+        case 'r': p++; break;
+        case 'u': {
+            unsigned cp = 0; int ok = 1;
+            for (int i = 1; i <= 4; i++) { int v = hexv(p[i]); if (v < 0) { ok = 0; break; } cp = cp * 16 + (unsigned)v; }
+            if (!ok) { p++; break; }
+            p += 5;
+            if (cp >= 0xD800 && cp <= 0xDBFF && p[0] == '\\' && p[1] == 'u') {
+                unsigned lo = 0; int ok2 = 1;
+                for (int i = 2; i <= 5; i++) { int v = hexv(p[i]); if (v < 0) { ok2 = 0; break; } lo = lo * 16 + (unsigned)v; }
+                if (ok2 && lo >= 0xDC00 && lo <= 0xDFFF) { cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00); p += 6; }
+            }
+            if (cp < 0x80) out[o++] = (char)cp;
+            else if (cp < 0x800) { out[o++] = (char)(0xC0 | (cp >> 6)); out[o++] = (char)(0x80 | (cp & 0x3F)); }
+            else if (cp < 0x10000) { out[o++] = (char)(0xE0 | (cp >> 12)); out[o++] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[o++] = (char)(0x80 | (cp & 0x3F)); }
+            else if (o + 5 < out_len) { out[o++] = (char)(0xF0 | (cp >> 18)); out[o++] = (char)(0x80 | ((cp >> 12) & 0x3F)); out[o++] = (char)(0x80 | ((cp >> 6) & 0x3F)); out[o++] = (char)(0x80 | (cp & 0x3F)); }
+            break;
+        }
+        case '\0': break;
+        default: out[o++] = *p++; break;
+        }
+    }
+    out[o] = '\0';
+}
+
+void ha_client_conversation(const char *text, char *out, size_t out_len)
+{
+    if (!out || !out_len) return;
+    out[0] = '\0';
+    if (!text || !text[0]) { snprintf(out, out_len, "Escreva uma mensagem."); return; }
+
+    char type[ASSISTANT_STR_MAX] = {0}, addr[ASSISTANT_STR_MAX] = {0};
+    char *pass = calloc(1, ASSISTANT_TOKEN_MAX);
+    char *auth = calloc(1, ASSISTANT_TOKEN_MAX + 24);
+    char *req = calloc(1, 768);
+    http_ctx_t ctx = {0};
+    ctx.cap = CONV_BODY_CAP;
+    ctx.body = calloc(1, CONV_BODY_CAP);
+    if (!pass || !auth || !req || !ctx.body) { snprintf(out, out_len, "Sem memoria para falar com o Home Assistant."); goto done; }
+
+    assistant_get_hub(type, sizeof type, addr, sizeof addr, NULL, 0, pass, ASSISTANT_TOKEN_MAX);
+    if (!assistant_hub_configured()) { snprintf(out, out_len, "Configure o Home Assistant em Ajustes para conversar."); goto done; }
+    if (type[0] && strcmp(type, "homeassistant") != 0) { snprintf(out, out_len, "O chat precisa de um hub Home Assistant."); goto done; }
+    if (!pass[0]) { snprintf(out, out_len, "Falta o token do Home Assistant em Ajustes."); goto done; }
+
+    char url[160];
+    if (strncmp(addr, "http://", 7) == 0 || strncmp(addr, "https://", 8) == 0) snprintf(url, sizeof url, "%s/api/conversation/process", addr);
+    else snprintf(url, sizeof url, "http://%s/api/conversation/process", addr);
+
+    char esc[400];
+    json_escape_into(text, esc, sizeof esc);
+    int n = snprintf(req, 768, "{\"text\":\"%s\",\"language\":\"pt-BR\"", esc);
+    if (s_conv_id[0]) n += snprintf(req + n, 768 - (size_t)n, ",\"conversation_id\":\"%s\"", s_conv_id);
+    snprintf(req + n, 768 - (size_t)n, "}");
+    snprintf(auth, ASSISTANT_TOKEN_MAX + 24, "Bearer %s", pass);
+
+    esp_http_client_config_t cfg = {
+        .url = url, .method = HTTP_METHOD_POST, .timeout_ms = 20000,
+        .event_handler = http_event, .user_data = &ctx,
+        .buffer_size = HTTP_BUF_MAX, .buffer_size_tx = 1024,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    if (!client) { snprintf(out, out_len, "Falha ao iniciar HTTP."); goto done; }
+    esp_http_client_set_header(client, "Authorization", auth);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_post_field(client, req, (int)strlen(req));
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+
+    if (err != ESP_OK || status != 200) {
+        ESP_LOGW(TAG, "conversation failed err=%s status=%d", esp_err_to_name(err), status);
+        if (status == 401) snprintf(out, out_len, "Token do Home Assistant recusado (401).");
+        else snprintf(out, out_len, "Home Assistant indisponivel (%d).", status);
+        goto done;
+    }
+    ctx.body[ctx.len] = '\0';
+    const char *sp = strstr(ctx.body, "\"plain\"");
+    if (sp) sp = strstr(sp, "\"speech\"");
+    if (sp) sp = strchr(sp + 8, '"');
+    if (sp) json_unescape(sp + 1, out, out_len);
+    if (!out[0]) snprintf(out, out_len, "O Home Assistant nao respondeu nada.");
+    const char *cid = strstr(ctx.body, "\"conversation_id\"");
+    if (cid) { cid = strchr(cid + 17, '"'); if (cid) json_unescape(cid + 1, s_conv_id, sizeof s_conv_id); }
+    else s_conv_id[0] = '\0';
+done:
+    free(pass); free(auth); free(req); free(ctx.body);
 }

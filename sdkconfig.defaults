@@ -14,3 +14,6 @@ CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
 
 # OpenCores Ethernet is a QEMU-only peripheral. sdkconfig.qemu turns it on.
 # The CYD overlay turns it off: ESP-IDF 6 removed the in-tree DP83848 PHY.
+
+# App grew past 1 MB (HA chat + Calico splash): 1.5 MB factory app
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y

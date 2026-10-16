@@ -1,3 +1,4 @@
+#include "cyd_splash.h"
 #include "cyd_display.h"
 
 #include "sdkconfig.h"
@@ -286,6 +287,7 @@ static esp_err_t panel_bringup(void)
 static void display_task(void *arg)
 {
     (void)arg;
+    cyd_splash_play(s_panel, CYD_W, CYD_H, 2);
     int64_t idle_since = esp_timer_get_time();
     int frame = 0;
     int last_mode = -1;

@@ -16,7 +16,7 @@
 
 static const char *TAG = "http_config";
 
-#define POST_BODY_MAXLEN 512
+#define POST_BODY_MAXLEN 1024
 #define SCAN_JSON_MAXLEN 1024
 
 /* Touch-sized portal: 48px targets, 16px type, card fits a 320px-wide panel. */
@@ -176,13 +176,13 @@ static esp_err_t chat_post_handler(httpd_req_t *req)
     char msg[192] = {0};
     wifi_form_get_field(body, "message", msg, sizeof(msg));
 
-    char reply[256];
+    char reply[512];
     assistant_chat_reply(msg, reply, sizeof(reply));
 
-    char reply_esc[400];
+    char reply_esc[900];
     wifi_form_json_escape(reply, reply_esc, sizeof(reply_esc));
 
-    char out[440];
+    char out[940];
     snprintf(out, sizeof(out), "{\"reply\":\"%s\"}", reply_esc);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, out);
@@ -195,7 +195,7 @@ static esp_err_t hub_post_handler(httpd_req_t *req)
     if (read_body(req, body, sizeof(body)) < 0) {
         return ESP_FAIL;
     }
-    char en[8] = {0}, type[32] = {0}, addr[96] = {0}, user[64] = {0}, pass[96] = {0};
+    char en[8] = {0}, type[32] = {0}, addr[96] = {0}, user[64] = {0}, pass[ASSISTANT_TOKEN_MAX] = {0};
     wifi_form_get_field(body, "enabled", en, sizeof(en));
     wifi_form_get_field(body, "type", type, sizeof(type));
     wifi_form_get_field(body, "address", addr, sizeof(addr));
@@ -314,6 +314,8 @@ httpd_handle_t http_config_server_start(void)
 {
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    /* Chat proxies to HA (TLS-free HTTP client + JSON buffers): needs more stack. */
+    config.stack_size = 10240;
     config.lru_purge_enable = true;
     config.max_uri_handlers = 16;
 

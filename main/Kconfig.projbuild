@@ -17,14 +17,14 @@ menu "ESP32 Wi-Fi starter"
 
     config APP_BOT_BACKEND_MOCK
         bool "Use a local mock backend for the assistant (chat/devices)"
-        default y
+        default n
         help
             When enabled, the assistant chat and smart-device panels are served
             by a built-in mock (canned replies and sample devices) so the whole
             UI and flow can be exercised without external credentials. When
-            disabled, the firmware would instead proxy to the real bot/home-hub
-            APIs (requires credentials configured at runtime); that proxy is not
-            implemented yet, so keep this enabled for now.
+            disabled (default), chat messages are sent to the Home Assistant
+            conversation API (POST /api/conversation/process) using the hub
+            address and long-lived token saved in the web app settings.
 
     config APP_ENABLE_CYD
         bool "Drive a Cheap Yellow Display (ESP32-2432S028, 2.8 inch)"
