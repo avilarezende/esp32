@@ -1,113 +1,235 @@
-# ESP32 — Firmware de Referência (Wi-Fi + MQTT + OTA)
+# esp32
 
-Firmware base para projetos IoT com ESP32, estruturado e seguro. Serve como
-ponto de partida para sensores, automação ou telemetria com:
+Firmware ESP-IDF para o **Cheap Yellow Display 2.8"** (ESP32-2432S028) e um
+portal Wi-Fi. No boot o aparelho entra na rede salva na NVS; sem credenciais
+(ou se a conexão falha), sobe o portal `ESP32-Setup`. Com o Home Assistant na
+LAN, o painel mostra relógio, clima, dispositivos, câmera e alertas.
 
-- **Wi-Fi** com reconexão automática e watchdog
-- **MQTT** (`PubSubClient`) com QoS 1, LWT (última vontade) e tópicos separados
-  por telemetria / status / comando
-- **OTA** seguro via ArduinoOTA
-- **Configuração centralizada** — valores em `src/config.h`, credenciais em
-  `src/secrets.h` (fora do git)
+O mesmo repositório ainda traz um [firmware de referência PlatformIO](#firmware-de-referência-platformio)
+(Wi-Fi + MQTT + OTA Arduino), independente do CYD.
 
-## Estrutura
+### Documentação (pt-BR)
+
+| Documento | Conteúdo |
+|-----------|----------|
+| [docs/GUIA.md](docs/GUIA.md) | Telas, chat, câmera, alertas, ajustes e o lado Home Assistant |
+| [docs/INSTALACAO.md](docs/INSTALACAO.md) | Gravação, **último flash por cabo** e OTA |
+| [docs/homeassistant/cyd.yaml](docs/homeassistant/cyd.yaml) | Pacote `rest_command` `cyd_camera` / `cyd_alert` |
+| [CHANGELOG.md](CHANGELOG.md) | O que entrou neste firmware |
+| [release/cyd/](release/cyd/) | Binários prontos + `flash.bat` / `flash.sh` |
+
+Gravação que **preserva** Wi-Fi, token e ajustes (Windows, PowerShell do ESP-IDF):
+
+```bat
+cd release\cyd
+flash.bat COM3
+```
+
+## O que o CYD faz
+
+- Portal SoftAP `ESP32-Setup` / `esp32setup` e app web no celular.
+- Chat real pelo Assist do HA (`POST /api/conversation/process`). O mock local
+  fica atrás de `CONFIG_APP_BOT_BACKEND_MOCK` (desligado por padrão).
+- Leitura do HA por um `POST /api/template` pequeno, com estados de erro
+  (`sem hub`, `sem token`, `token ruim`, `offline`).
+- Token longo até **319** caracteres.
+- Campainha e botão **Porta**: snapshots JPEG no painel (`POST /camera`).
+- Até 5 linhas, no formato `entidade` ou `entidade=Rótulo` (padrão: garagens).
+- Relógio Montserrat com antialiasing, gato calico animado, splash ditherizado.
+- Inversão de cor **desligada** por padrão; ordem BGR opcional.
+- Ajustes da tela na NVS e na seção **Tela do CYD** (`GET`/`POST /config`).
+- Ícone de internet na tela de descanso.
+- Alertas do HA (`POST /alert`, `GET /alerts`), selo, lista e **LIMPAR TUDO**.
+- OTA por HTTP com duas partições e rollback (`POST /ota`).
+- `GET /touch` para depurar o toque.
+
+## Requisitos
+
+- ESP-IDF **v5.3.2** e a toolchain `esp32`
+- `qemu-xtensa` (QEMU da Espressif) só para emular o portal
+
+No Cloud Agent isso é instalado por [`.cursor/install.sh`](.cursor/install.sh).
+Manual: [Get Started do ESP-IDF 5.3.2](https://docs.espressif.com/projects/esp-idf/en/v5.3.2/esp32/get-started/index.html).
+
+## Ativar a toolchain
+
+```bash
+. "$HOME/esp/esp-idf/export.sh"
+```
+
+## Fluxo de Wi-Fi
+
+1. No boot o aparelho lê SSID e senha na NVS.
+2. Se existirem, entra como estação e reconecta se a rede cair.
+3. Se faltarem, ou a entrada falhar, sobe o SoftAP `ESP32-Setup` e a página de configuração.
+4. O celular entra em `ESP32-Setup` (senha `esp32setup`), abre o IP do aparelho e envia a rede.
+5. As credenciais vão para a NVS e o aparelho reinicia para conectar.
+
+SSID e senha do AP estão em [`main/wifi_manager.h`](main/wifi_manager.h).
+
+### Endpoints
+
+Servidor em [`main/http_server.c`](main/http_server.c), porta **80**:
+
+- `GET /` — formulário de Wi-Fi, ou o app (chat, Casa, Ajustes) quando já há rede.
+- `GET /scan` — redes próximas em JSON. No QEMU (sem rádio) devolve exemplos.
+- `POST /connect` — SSID de 1–32 caracteres e senha vazia ou de 8–63; grava na NVS e reinicia.
+- `POST /forget` — apaga o Wi-Fi salvo.
+- `GET /state`, `GET /bots`, `GET /devices`, `GET /hub/discover`, `GET /weather`
+- `POST /chat`, `POST /hub`, `POST /bot`
+- `GET /config`, `POST /config` — ajustes da tela (NVS `app_cfg`)
+- `POST /camera` — abre o visor de snapshot (exige a chave do aparelho)
+- `POST /display` — inversão, BGR e padrão de teste (exige a chave)
+- `POST /alert`, `GET /alerts` — alertas do HA (POST exige a chave)
+- `GET /touch` — última leitura do XPT2046
+- `POST /ota` — atualização HTTP (exige a chave)
+
+A chave é os **16 primeiros hex** de `SHA-256` do token longo do HA. O guia
+mostra como calculá-la e como o HA chama `/camera` e `/alert`.
+
+## App web
+
+A página ([`main/app.html`](main/app.html)) é feita para um painel pequeno
+(cerca de 320×240): alvos de 48 px, tipo de 16 px, abas embaixo e uma coluna.
+No celular ela cresce.
+
+- **Chat** com o gatinho. As frases vão para o Assist do HA.
+- **Casa** lista as entidades configuradas na tela.
+- **Ajustes** mostra a rede e a seção **Tela do CYD** (dispositivos, câmeras,
+  brilho, cores, gato, relógio, alertas) e o envio de `esp32-ota.bin`.
+- Depois de **30 s** sem toque, o protetor cobre a página. `prefers-reduced-motion`
+  desliga a animação do gato no navegador.
+
+No primeiro uso o onboarding pergunta o hub. Endereço de exemplo, porta 80:
+`http://192.168.0.10`. O token longo vai no campo de senha.
+
+## Cheap Yellow Display (ESP32-2432S028)
+
+Paisagem 320×240 (ILI9341 + XPT2046). A tabela de partições tem dois slots OTA
+de 1,94 MB. Quem já gravou uma imagem antiga precisa de **um último flash por
+cabo** ([INSTALACAO.md](docs/INSTALACAO.md)); as próximas trocas são `POST /ota`.
+
+```bash
+idf.py -B build_cyd -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
+idf.py -B build_cyd -p /dev/ttyUSB0 flash monitor
+```
+
+Porta serial: `/dev/ttyUSB0` ou `/dev/ttyACM0` no Linux, `COMx` no Windows,
+`/dev/cu.usbserial-*` ou `/dev/cu.wchusbserial*` no macOS. Esta imagem é só a
+CYD **2.8"**. A placa de 3.5" usa outro controlador.
+
+Para regenerar `release/cyd/` (incluindo `firmware-cyd.bin` e `esp32-ota.bin`):
+
+```bash
+./scripts/pack-release-cyd.sh
+```
+
+## Build sem o painel
+
+```bash
+idf.py build
+idf.py -p /dev/ttyUSB0 flash monitor
+```
+
+## Portal no QEMU
+
+O QEMU não emula o rádio Wi-Fi. O build dedicado desliga o rádio
+(`CONFIG_APP_ENABLE_WIFI_RADIO=n`, ver [`sdkconfig.qemu`](sdkconfig.qemu)) e
+serve o mesmo portal pela Ethernet OpenCores.
+
+```bash
+idf.py -B build_qemu -DSDKCONFIG=build_qemu/sdkconfig \
+       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.qemu" build
+
+qemu-system-xtensa -M esp32 -m 4M \
+  -drive file=build_qemu/flash_image.bin,if=mtd,format=raw \
+  -drive file=build_qemu/qemu_efuse.bin,if=none,format=raw,id=efuse \
+  -global driver=nvram.esp32.efuse,property=drive,value=efuse \
+  -global driver=timer.esp32.timg,property=wdt_disable,value=true \
+  -nic user,model=open_eth,hostfwd=tcp::8080-:80 \
+  -nographic -serial mon:stdio
+```
+
+(`build_qemu/flash_image.bin` e `build_qemu/qemu_efuse.bin` aparecem na primeira
+vez que se roda `idf.py -B build_qemu qemu`.)
+
+Abra <http://127.0.0.1:8080/> ou:
+
+```bash
+curl http://127.0.0.1:8080/
+curl -X POST --data 'ssid=MyHomeWiFi&password=secret' \
+     http://127.0.0.1:8080/connect
+```
+
+No build QEMU o portal passa a mostrar o estado conectado simulado. Reinicie o
+emulador para ver `found stored credentials for SSID '...'`.
+
+## Testes
+
+A lógica do formulário (URL, campos, SSID e senha) está no componente
+`wifi_form` e tem testes de host com `gcc` + Unity:
+
+```bash
+./host_test/run.sh
+```
+
+## CI
+
+O workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) faz, em push e
+pull request para `main`:
+
+- secret scanning com Gitleaks
+- garantia de que `src/secrets.h` não está versionado
+- build PlatformIO do firmware de referência
+- build **ESP-IDF 5.3.2** do CYD, com artefato `release` contendo
+  `firmware-cyd.bin` (imagem única) e `esp32-ota.bin` (payload do `POST /ota`)
+
+## Layout
 
 ```
-esp32/
-├── platformio.ini          # Config do PlatformIO (board esp32dev)
-├── src/
-│   ├── main.cpp            # Firmware principal
-│   ├── config.h            # Configuração do dispositivo (não sensível)
-│   ├── secrets.example.h   # Template de credenciais (versionado)
-│   └── secrets.h           # Credenciais reais (gerado/criado, NÃO versionar)
-└── scripts/
-    └── ensure_secrets.py   # Cria secrets.h a partir do template na 1ª build
+.
+├── CMakeLists.txt
+├── partitions_ota.csv      # nvs + otadata + ota_0 + ota_1
+├── sdkconfig.defaults
+├── sdkconfig.cyd
+├── sdkconfig.qemu
+├── docs/
+├── release/cyd/
+├── scripts/pack-release-cyd.sh
+├── components/
+│   ├── esp_lcd_ili9341/
+│   └── wifi_form/
+├── host_test/
+├── main/                   # portal, HA, painel, OTA
+├── platformio.ini          # firmware de referência (abaixo)
+└── src/                    # firmware de referência
 ```
 
-## Pré-requisitos
+## Firmware de referência PlatformIO
 
-- [PlatformIO Core](https://docs.platformio.org/en/latest/core/installation.html)
-  (`pip install platformio` ou via VS Code extension)
-- Um ESP32 (DevKit) conectado por USB
-
-## Primeira compilação
+Ponto de partida separado (DevKit, sem o painel CYD): Wi-Fi com reconexão,
+MQTT (`PubSubClient`, QoS 1, LWT) e OTA Arduino. Credenciais em `src/secrets.h`,
+que **não** entra no git. Na primeira `pio run`, `scripts/ensure_secrets.py`
+copia `src/secrets.example.h`.
 
 ```sh
 pio run
+pio run -t upload
+pio run -t monitor
 ```
 
-Na primeira build, `src/secrets.h` é criado automaticamente a partir de
-`secrets.example.h`. **Abra o arquivo e preencha:**
+| Constante | Uso |
+|-----------|-----|
+| `DEVICE_NAME` | ID no broker e no OTA |
+| `WIFI_TIMEOUT_MS` | Timeout do Wi-Fi |
+| `MQTT_BROKER_HOST` / `PORT` | Broker |
+| `MQTT_TOPIC_TELEMETRY` | Telemetria |
+| `MQTT_TOPIC_STATUS` | online/offline (LWT) |
+| `MQTT_TOPIC_COMMAND` | `led:on`, `led:off`, `led:toggle` |
+| `PUBLISH_INTERVAL_MS` | Intervalo da telemetria |
 
-```c
-#define WIFI_SSID       "minha-rede"
-#define WIFI_PASSWORD   "minha-senha"
-#define MQTT_USERNAME   ""          // se o broker não exige auth
-#define MQTT_PASSWORD   ""
-#define OTA_PASSWORD     "senha-ota"  // recomendo definir
-```
-
-> ⚠️ **Segurança:** `src/secrets.h` está no `.gitignore` e nunca deve ser
-> commitado. Se você usa o exemplo como está, o dispositivo não conecta —
-> valores reais são obrigatórios.
-
-## Upload
-
-```sh
-pio run -t upload      # envia via USB
-pio run -t monitor     # monitora o serial (115200 baud)
-```
-
-## Configuração (src/config.h)
-
-Ajuste o identificador do dispositivo e o broker antes do upload:
-
-| Constante                 | Uso                                        |
-|---------------------------|--------------------------------------------|
-| `DEVICE_NAME`             | ID no broker e no OTA                      |
-| `WIFI_TIMEOUT_MS`         | Timeout de conexão Wi-Fi                   |
-| `MQTT_BROKER_HOST/PORT`   | Endereço e porta do broker MQTT            |
-| `MQTT_TOPIC_TELEMETRY`    | Tópico de telemetria periódica             |
-| `MQTT_TOPIC_STATUS`       | Tópico de status (online/offline via LWT)  |
-| `MQTT_TOPIC_COMMAND`      | Tópico de comandos recebidos              |
-| `PUBLISH_INTERVAL_MS`     | Intervalo da telemetria                    |
-
-## Tópicos MQTT (exemplo)
-
-```text
-devices/<nome>/telemetry   → JSON com uptime, heap livre e RSSI
-devices/<nome>/status      → "online" / "offline" (retido + LWT)
-devices/<nome>/command     → comandos: led:on | led:off | led:toggle
-```
-
-## Integração contínua (CI)
-
-O repositório inclui um workflow de CI (`.github/workflows/ci.yml`) executado em
-push e pull request para `main`, com dois jobs de validação:
-
-- **`security-scan`** — faz secret scanning de todo o repositório com a
-  [action oficial do Gitleaks](https://github.com/gitleaks/gitleaks-action),
-  detectando credenciais, tokens e chaves que tenham vazado por engano.
-- **`validate-secrets-template`** — garante que `src/secrets.h` **nunca** esteja
-  versionado no git (o job falha se o arquivo estiver no controle de versão) e
-  que ele continue listado no `.gitignore`.
-
-O objetivo é funcionar como rede de segurança para a regra já documentada acima:
-mesmo com `src/secrets.h` no `.gitignore`, um `git add -f` ou um erro humano pode
-vazar credenciais reais para o histórico — o CI bloqueia isso antes do merge.
-
-## Próximos passos sugeridos
-
-- Adicionar sensores (DHT22, DS18B20, etc.) e publicar leituras na telemetria
-- Implementar deep sleep para economia de bateria
-- Envolver o broker em TLS (configurar CA em `WiFiClientSecure`)
-- Adicionar testes unitários com `pio test`
+Tópicos: `devices/<nome>/telemetry`, `.../status`, `.../command`.
 
 ## Licença
 
 MIT — veja `LICENSE`.
-## Ambiente na nuvem
-
-Instalação, locks, diagnóstico e separação desenvolvimento/produção estão documentados em
-[`antigravity-config/cloud/README.md`](../antigravity-config/cloud/README.md) no workspace com os sete checkouts.
-No GitHub: [guia do ambiente](https://github.com/avilarezende/antigravity-config/blob/main/cloud/README.md).

@@ -3,20 +3,33 @@ src/secrets.h
 
 # PlatformIO
 .pio/
+.pioenvs/
+.piolibdeps/
 .vscode/.browse.VC.db*
 .vscode/.browse.VC.db-wal
 .vscode/.browse.VC.db-shm
 
-# Build / artefatos
-.pioenvs/
-.piolibdeps/
+# ESP-IDF build output
+/build/
+/build_qemu/
+/build_cyd/
+sdkconfig
+sdkconfig.old
+
+# Host unit test build output
+/host_test/build/
+
+# Binários de build. O pacote pronto do CYD continua versionado.
 *.bin
 *.elf
 *.hex
+!release/cyd/*.bin
 
 # IDE / SO
+.vscode/
 .vscode/*
 !.vscode/extensions.json
 .idea/
 *.swp
+.DS_Store
 Thumbs.db

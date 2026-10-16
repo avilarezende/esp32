@@ -1,0 +1,49 @@
+# Pacote Home Assistant para o CYD.
+#
+# O CYD escuta na porta 80 da rede de casa. Estas chamadas vão para o IP do
+# painel, não para o Home Assistant.
+#
+# 1. Calcule a chave (16 primeiros hex do SHA-256 do token longo salvo no CYD):
+#      printf '%s' 'SEU_TOKEN' | sha256sum | cut -c1-16
+# 2. Em secrets.yaml:
+#      cyd_camera_url: "http://192.168.0.50/camera?key=COLOQUE_A_CHAVE"
+#      cyd_alert_url:  "http://192.168.0.50/alert?key=COLOQUE_A_CHAVE"
+# 3. Copie este arquivo para /config/packages/cyd.yaml (packages: !include_dir_named packages).
+# 4. Ajuste as entity_id de câmera e de campainha para a sua casa.
+#    Os ids abaixo são o padrão de fábrica do firmware.
+
+rest_command:
+  cyd_camera:
+    url: !secret cyd_camera_url
+    method: POST
+    content_type: "application/x-www-form-urlencoded"
+    payload: "entity={{ entity }}&seconds={{ seconds | default(20) }}"
+  cyd_alert:
+    url: !secret cyd_alert_url
+    method: POST
+    content_type: "application/x-www-form-urlencoded"
+    payload: >-
+      id={{ id | default('') }}&title={{ title | urlencode }}&message={{ message | urlencode }}&level={{ level | default('info') }}&duration={{ duration | default(0) }}
+
+automation:
+  - id: cyd_campainha
+    alias: CYD — campainha abre a câmera
+    mode: restart
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.campainha
+        to: "on"
+    action:
+      - action: rest_command.cyd_camera
+        data:
+          entity: camera.frigate_frente_esquerda
+          seconds: 20
+
+# Exemplo de alerta (não fica ativo: cole dentro de uma automação real):
+#   - action: rest_command.cyd_alert
+#     data:
+#       id: portao
+#       title: Portao
+#       message: Aberto
+#       level: warn
+#       duration: 0

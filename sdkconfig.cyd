@@ -1,0 +1,8 @@
+# Cheap Yellow Display (ESP32-2432S028, 2.8", ILI9341 + XPT2046).
+# Build into a separate directory so the QEMU sdkconfig stays untouched:
+#   idf.py -B build_cyd -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
+#   idf.py -B build_cyd -p /dev/ttyUSB0 flash monitor
+CONFIG_APP_ENABLE_WIFI_RADIO=y
+CONFIG_APP_ENABLE_CYD=y
+# The OpenCores MAC exists only in QEMU. ESP-IDF 6 no longer ships its PHY.
+CONFIG_ETH_USE_OPENETH=n
