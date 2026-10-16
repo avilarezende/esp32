@@ -80,32 +80,45 @@ devices/<nome>/status      → "online" / "offline" (retido + LWT)
 devices/<nome>/command     → comandos: led:on | led:off | led:toggle
 ```
 
-## Integração contínua (CI)
+## Integração contínua e entrega (CI/CD)
 
-O repositório inclui um workflow de CI (`.github/workflows/ci.yml`) executado em
-push e pull request para `main`, com dois jobs de validação:
+![Arquitetura ESP32 + CI/CD](docs/images/esp32-architecture-cicd.jpg)
 
-- **`security-scan`** — faz secret scanning de todo o repositório com a
-  [action oficial do Gitleaks](https://github.com/gitleaks/gitleaks-action),
-  detectando credenciais, tokens e chaves que tenham vazado por engano.
-- **`validate-secrets-template`** — garante que `src/secrets.h` **nunca** esteja
-  versionado no git (o job falha se o arquivo estiver no controle de versão) e
-  que ele continue listado no `.gitignore`.
+![Pipeline CI/CD](docs/images/esp32-ci-cd-pipeline.jpg)
 
-O objetivo é funcionar como rede de segurança para a regra já documentada acima:
-mesmo com `src/secrets.h` no `.gitignore`, um `git add -f` ou um erro humano pode
-vazar credenciais reais para o histórico — o CI bloqueia isso antes do merge.
+| Workflow | Gatilho | O que faz |
+|----------|---------|-----------|
+| **CI** (`.github/workflows/ci.yml`) | push / PR em `main` | Gitleaks · validação de `secrets.h` · pytest · `pio run` · artifact |
+| **CD** (`.github/workflows/cd.yml`) | tag `v*` ou dispatch | Build + GitHub Release com `.bin` / `.elf` / SHA256 |
+
+Documentação completa: [docs/CI_CD.md](docs/CI_CD.md).
+
+### Testes locais
+
+```sh
+python -m pip install pytest
+python -m pytest tests -v
+pio run
+```
+
+### Proteção da branch `main`
+
+A `main` deve aceitar apenas PRs com CI verde. Guia e script:
+
+- [docs/BRANCH_PROTECTION.md](docs/BRANCH_PROTECTION.md)
+- `./scripts/protect-main-branch.sh` (requer `gh` com permissão admin)
 
 ## Próximos passos sugeridos
 
 - Adicionar sensores (DHT22, DS18B20, etc.) e publicar leituras na telemetria
 - Implementar deep sleep para economia de bateria
 - Envolver o broker em TLS (configurar CA em `WiFiClientSecure`)
-- Adicionar testes unitários com `pio test`
+- Expandir cobertura com `pio test` no hardware/simulador
 
 ## Licença
 
 MIT — veja `LICENSE`.
+
 ## Ambiente na nuvem
 
 Instalação, locks, diagnóstico e separação desenvolvimento/produção estão documentados em

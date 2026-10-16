@@ -6,32 +6,46 @@ evitando que o usuário esqueça de copiar o template. Não sobrescreve um
 secrets.h existente (com valores reais já preenchidos).
 """
 
-Import("env")
+Import("env")  # noqa: F821 — injetado pelo PlatformIO
+
 import os
 import shutil
 
-SRC_DIR = os.path.join(env.subst("$PROJECT_DIR"), "src")
-EXAMPLE = os.path.join(SRC_DIR, "secrets.example.h")
-TARGET = os.path.join(SRC_DIR, "secrets.h")
+
+def ensure_secrets_h(src_dir, mode=0o600):
+    """Cópia segura do template; retorna created|exists|missing_example."""
+    example = os.path.join(src_dir, "secrets.example.h")
+    target = os.path.join(src_dir, "secrets.h")
+
+    if os.path.exists(target):
+        return "exists"
+    if not os.path.exists(example):
+        return "missing_example"
+
+    shutil.copyfile(example, target)
+    os.chmod(target, mode)
+    return "created"
 
 
-def ensure_secrets_h(*_args, **_kwargs):
-    if not os.path.exists(TARGET):
-        if not os.path.exists(EXAMPLE):
-            print("[prebuild] AVISO: secrets.example.h não encontrado.")
-            return
-        shutil.copyfile(EXAMPLE, TARGET)
-        os.chmod(TARGET, 0o600)
+SRC_DIR = os.path.join(env.subst("$PROJECT_DIR"), "src")  # noqa: F821
+
+
+def _prebuild_hook(*_args, **_kwargs):
+    result = ensure_secrets_h(SRC_DIR)
+    if result == "created":
         print("[prebuild] secrets.h criado a partir do template.")
         print(
             "[prebuild] ATENÇÃO: preencha WIFI_SSID, WIFI_PASSWORD e o MQTT "
             "em src/secrets.h antes de publicar."
         )
-    else:
+    elif result == "exists":
         print("[prebuild] secrets.h já existe. Mantido.")
+    else:
+        print("[prebuild] AVISO: secrets.example.h não encontrado.")
 
 
-# Roda antes de cada build e antes do upload
-# The header is needed while compiling main.cpp, before buildprog actions run.
-ensure_secrets_h()
-env.AddPreAction("upload", ensure_secrets_h)
+# Mantém API importável pelos testes unitários via secrets_utils.py
+# (este arquivo continua sendo o entrypoint do PlatformIO).
+
+_prebuild_hook()
+env.AddPreAction("upload", _prebuild_hook)  # noqa: F821
