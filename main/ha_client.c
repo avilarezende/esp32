@@ -1,6 +1,7 @@
 #include "ha_client.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -233,7 +234,7 @@ static void ingest_entity(ha_snapshot_t *s, const char *obj)
     }
 }
 
-static void scan_body(ha_snapshot_t *s, const char *body, int len)
+__attribute__((unused)) static void scan_body(ha_snapshot_t *s, const char *body, int len)
 {
     int depth = 0;
     int obj_start = -1;
@@ -282,7 +283,7 @@ static esp_err_t http_event(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
-static void build_url(char *url, size_t url_len, const char *addr)
+__attribute__((unused)) static void build_url(char *url, size_t url_len, const char *addr)
 {
     if (strncmp(addr, "http://", 7) == 0 || strncmp(addr, "https://", 8) == 0) {
         snprintf(url, url_len, "%s/api/states", addr);
@@ -291,94 +292,85 @@ static void build_url(char *url, size_t url_len, const char *addr)
     snprintf(url, url_len, "http://%s/api/states", addr);
 }
 
+/* Ask HA to render a tiny summary instead of downloading /api/states (which
+ * is hundreds of KB on a real install and was truncated at 48 KB):
+ *   T|<temp>|<humidity>   L|<lights on>|<lights total>   D|<name>|<domain>|<state> (x4) */
+static const char HA_SUMMARY_BODY[] = "{\"template\": \"{%- set ts = states.sensor|selectattr('attributes.device_class','eq','temperature')|rejectattr('state','in',['unknown','unavailable'])|list -%}\\n{%- set hs = states.sensor|selectattr('attributes.device_class','eq','humidity')|rejectattr('state','in',['unknown','unavailable'])|list -%}\\n{%- set w = states.weather|list -%}\\nT|{{ (w[0].attributes.temperature if w and w[0].attributes.temperature is number else (ts[0].state if ts else '')) }}|{{ (w[0].attributes.humidity if w and w[0].attributes.humidity is number else (hs[0].state if hs else '')) }}\\n{%- set ds = (states.light|list + states.switch|list)|rejectattr('state','in',['unknown','unavailable'])|sort(attribute='state',reverse=true)|list %}\\nL|{{ states.light|selectattr('state','eq','on')|list|count }}|{{ states.light|rejectattr('state','in',['unknown','unavailable'])|list|count }}\\n{%- for d in ds[:4] %}\\nD|{{ d.name[:17]|replace('|',' ') }}|{{ d.domain }}|{{ d.state }}\\n{%- endfor %}\\n\"}";
+
+static void parse_summary(ha_snapshot_t *s, char *body)
+{
+    char *save = NULL;
+    for (char *line = strtok_r(body, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+        char *f[4] = {0};
+        int n = 0;
+        char *sv2 = NULL;
+        for (char *p = strtok_r(line, "|", &sv2); p && n < 4; p = strtok_r(NULL, "|", &sv2)) f[n++] = p;
+        if (n >= 2 && strcmp(f[0], "T") == 0) {
+            if (f[1] && f[1][0] && (isdigit((unsigned char)f[1][0]) || f[1][0] == '-')) { s->temp_c = (int)lroundf(strtof(f[1], NULL)); s->has_temp = 1; }
+            if (n >= 3 && f[2][0] && isdigit((unsigned char)f[2][0])) { s->humidity = (int)lroundf(strtof(f[2], NULL)); s->has_humidity = 1; }
+        } else if (n >= 3 && strcmp(f[0], "L") == 0) {
+            s->lights_on = atoi(f[1]); s->lights_total = atoi(f[2]);
+        } else if (n >= 4 && strcmp(f[0], "D") == 0) {
+            int on = strcmp(f[3], "on") == 0 ? 1 : (strcmp(f[3], "off") == 0 ? 0 : -1);
+            add_device(s, f[1], on == 1 ? "ligado" : (on == 0 ? "desligado" : f[3]), on);
+        }
+    }
+}
+
 static esp_err_t fetch_once(ha_snapshot_t *out)
 {
     char type[ASSISTANT_STR_MAX] = {0};
     char addr[ASSISTANT_STR_MAX] = {0};
-    char user[ASSISTANT_STR_MAX] = {0};
     static char pass[ASSISTANT_TOKEN_MAX];
+    static char auth[ASSISTANT_TOKEN_MAX + 24];
     pass[0] = '\0';
-    assistant_get_hub(type, sizeof type, addr, sizeof addr, user, sizeof user, pass, sizeof pass);
-    (void)user;
+    assistant_get_hub(type, sizeof type, addr, sizeof addr, NULL, 0, pass, sizeof pass);
 
     memset(out, 0, sizeof *out);
     snprintf(out->place, sizeof out->place, "Casa");
-    if (!assistant_hub_configured()) {
-        out->configured = 0;
-        set_status(out, "sem hub");
-        return ESP_ERR_INVALID_STATE;
-    }
+    if (!assistant_hub_configured()) { out->configured = 0; set_status(out, "sem hub"); return ESP_ERR_INVALID_STATE; }
     out->configured = 1;
-    if (type[0] && strcmp(type, "homeassistant") != 0) {
-        set_status(out, "hub nao HA");
-        return ESP_ERR_NOT_SUPPORTED;
-    }
-    if (!pass[0]) {
-        set_status(out, "sem token");
-        return ESP_ERR_INVALID_ARG;
-    }
+    if (type[0] && strcmp(type, "homeassistant") != 0) { set_status(out, "hub nao HA"); return ESP_ERR_NOT_SUPPORTED; }
+    if (!pass[0]) { set_status(out, "sem token"); return ESP_ERR_INVALID_ARG; }
 
     char url[160];
-    build_url(url, sizeof url, addr);
+    if (strncmp(addr, "http://", 7) == 0 || strncmp(addr, "https://", 8) == 0) snprintf(url, sizeof url, "%s/api/template", addr);
+    else snprintf(url, sizeof url, "http://%s/api/template", addr);
 
     http_ctx_t ctx = {0};
-    ctx.cap = BODY_CAP;
-    ctx.body = malloc((size_t)ctx.cap);
-    if (!ctx.body) {
-        set_status(out, "sem mem");
-        return ESP_ERR_NO_MEM;
-    }
-    ctx.body[0] = '\0';
-
-    static char auth[ASSISTANT_TOKEN_MAX + 24];
+    ctx.cap = 2048;
+    ctx.body = calloc(1, (size_t)ctx.cap);
+    if (!ctx.body) { set_status(out, "sem mem"); return ESP_ERR_NO_MEM; }
     snprintf(auth, sizeof auth, "Bearer %s", pass);
 
     esp_http_client_config_t cfg = {
-        .url = url,
-        .method = HTTP_METHOD_GET,
-        .timeout_ms = 8000,
-        .event_handler = http_event,
-        .user_data = &ctx,
-        .buffer_size = HTTP_BUF_MAX,
-        .buffer_size_tx = 1024,
+        .url = url, .method = HTTP_METHOD_POST, .timeout_ms = 8000,
+        .event_handler = http_event, .user_data = &ctx,
+        .buffer_size = HTTP_BUF_MAX, .buffer_size_tx = 1024,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    if (!client) {
-        free(ctx.body);
-        set_status(out, "http falhou");
-        return ESP_FAIL;
-    }
+    if (!client) { free(ctx.body); set_status(out, "offline"); return ESP_FAIL; }
     esp_http_client_set_header(client, "Authorization", auth);
     esp_http_client_set_header(client, "Content-Type", "application/json");
-
+    esp_http_client_set_post_field(client, HA_SUMMARY_BODY, (int)strlen(HA_SUMMARY_BODY));
     esp_err_t err = esp_http_client_perform(client);
     int status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
 
     if (err != ESP_OK || status != 200) {
-        ESP_LOGW(TAG, "HA fetch failed err=%s status=%d bytes=%d",
-                 esp_err_to_name(err), status, ctx.len);
+        ESP_LOGW(TAG, "HA template failed err=%s status=%d", esp_err_to_name(err), status);
         free(ctx.body);
         set_status(out, status == 401 ? "token ruim" : "offline");
         out->ready = -1;
         return err != ESP_OK ? err : ESP_FAIL;
     }
-
-    scan_body(out, ctx.body, ctx.len);
+    ctx.body[ctx.len] = '\0';
+    parse_summary(out, ctx.body);
     free(ctx.body);
-
-    if (out->lights_total > 0 && out->device_count == 0) {
-        char detail[HA_DETAIL_MAX];
-        int on = out->lights_on > 9 ? 9 : out->lights_on;
-        int tot = out->lights_total > 9 ? 9 : out->lights_total;
-        snprintf(detail, sizeof detail, "%d/%d", on, tot);
-        add_device(out, "Luzes", detail, out->lights_on > 0 ? 1 : 0);
-    }
     out->ready = 1;
     set_status(out, "HA ok");
     ESP_LOGI(TAG, "HA ok: temp=%d hum=%d devices=%d lights=%d/%d",
-             out->has_temp ? out->temp_c : -1,
-             out->has_humidity ? out->humidity : -1,
+             out->has_temp ? out->temp_c : -1, out->has_humidity ? out->humidity : -1,
              out->device_count, out->lights_on, out->lights_total);
     return ESP_OK;
 }

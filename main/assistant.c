@@ -145,6 +145,23 @@ void assistant_bots_json(char *buf, size_t buf_len)
 
 void assistant_devices_json(char *buf, size_t buf_len)
 {
+#if !CONFIG_APP_BOT_BACKEND_MOCK
+    {
+        ha_snapshot_t ha;
+        ha_client_copy(&ha);
+        strlcpy(buf, "[", buf_len);
+        for (int i = 0; i < ha.device_count; i++) {
+            char name[48], det[40], e[160];
+            wifi_form_json_escape(ha.devices[i].name, name, sizeof name);
+            wifi_form_json_escape(ha.devices[i].detail, det, sizeof det);
+            snprintf(e, sizeof e, "%s{\"name\":\"%s\",\"room\":\"Casa\",\"type\":\"switch\",\"on\":%s,\"detail\":\"%s\"}",
+                     i ? "," : "", name, ha.devices[i].on == 1 ? "true" : "false", det);
+            strlcat(buf, e, buf_len);
+        }
+        strlcat(buf, "]", buf_len);
+        return;
+    }
+#endif
     /* Sample devices "controlled by the bot" (mock). */
     strlcpy(buf,
         "["
@@ -169,6 +186,18 @@ void assistant_discover_json(char *buf, size_t buf_len)
 
 void assistant_weather_json(char *buf, size_t buf_len)
 {
+#if !CONFIG_APP_BOT_BACKEND_MOCK
+    {
+        ha_snapshot_t ha;
+        ha_client_copy(&ha);
+        char t[16] = "null", h[16] = "null";
+        if (ha.has_temp) snprintf(t, sizeof t, "%d", ha.temp_c);
+        if (ha.has_humidity) snprintf(h, sizeof h, "%d", ha.humidity);
+        snprintf(buf, buf_len, "{\"place\":\"Casa\",\"tempC\":%s,\"humidity\":%s,\"condition\":\"%s\",\"code\":\"partly\"}",
+                 t, h, ha.status);
+        return;
+    }
+#endif
     /* Local mock so the glanceable clock can show temperature and humidity
      * without an external weather provider. */
     strlcpy(buf,

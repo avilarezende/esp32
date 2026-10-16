@@ -693,8 +693,13 @@ static void paint_home(canvas_t *c, const cyd_scene_t *scene)
                    strcmp(scene->status, "sem token") == 0) {
             text_center(c, 110, 1, "nao foi possivel ler o HA", c->muted);
             text_center(c, 128, 1, "confira endereco e token", c->muted);
-        } else {
+        } else if (strcmp(scene->status, "HA ok") == 0) {
+            text_center(c, 110, 1, "nenhuma luz ou tomada no HA", c->muted);
+        } else if (strcmp(scene->status, "aguardando") == 0) {
             text_center(c, 110, 1, "buscando dispositivos...", c->muted);
+        } else {
+            text_center(c, 110, 1, "erro ao ler o HA:", c->muted);
+            text_center(c, 128, 1, scene->status, c->muted);
         }
         kitten(c, 112, 148, 1, 2, scene->blink, scene->tail);
     } else {
