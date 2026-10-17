@@ -23,9 +23,13 @@ e da observação do Home Assistant. Testado na placa pelo autor da série.
   (`GET /api/camera_proxy` no HA, decodificado com o TJpgDec da ROM).
   O botão padrão se chama **Porta** e aponta para a câmera da frente direita.
 - Até cinco linhas. Sintaxe `entidade` ou `entidade=Rótulo`. O padrão de
-  fábrica é `switch.garagem_switch_1=Garagem 1`,
-  `switch.garagem_switch_2=Garagem 2`, `switch.casa_aracaju_piscina=Piscina`,
+  fábrica é `switch.carros_switch_1=Garagem 1`,
+  `switch.carros_switch_2=Garagem 2`, `switch.casa_aracaju_piscina=Piscina`,
   `switch.casa_ewelink_poco=Poco`.
+- As luzes da garagem no padrão de fábrica passam a ser o interruptor Tuya
+  **Carros** (`switch.carros_switch_1` e `switch.carros_switch_2`), com os
+  rótulos **Garagem 1** e **Garagem 2**. `switch.garagem_switch_1/2` eram um
+  interruptor antigo, fora do ar. Vale quando a NVS ainda não tem `c_ents`.
 - Relógio com Montserrat semibold e antialiasing (24 h por padrão).
 - Gato calico com comportamentos (parado, dorme, alonga, pata, olha em volta)
   e splash ditherizado na inicialização.
