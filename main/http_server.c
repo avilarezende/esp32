@@ -238,7 +238,8 @@ static esp_err_t camera_post_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
 
-/* POST /display?key=..&invert=0|1&bgr=0|1&test=1 (bgr applies after reboot). */
+/* POST /display?key=..&invert=0|1&bgr=0|1&test=1
+ * invert is applied on the next display_task pass; bgr after reboot. */
 static esp_err_t display_post_handler(httpd_req_t *req)
 {
     char body[POST_BODY_MAXLEN] = {0};

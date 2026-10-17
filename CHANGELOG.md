@@ -22,13 +22,17 @@ e da observação do Home Assistant. Testado na placa pelo autor da série.
 - Campainha e botão rápido abrem um visor de snapshot JPEG
   (`GET /api/camera_proxy` no HA, decodificado com o TJpgDec da ROM).
   O botão padrão se chama **Porta** e aponta para a câmera da frente direita.
-- Até cinco linhas. Sintaxe `entidade` ou `entidade=Rótulo`. O padrão são os
-  interruptores da garagem, piscina e poço.
+- Até cinco linhas. Sintaxe `entidade` ou `entidade=Rótulo`. O padrão de
+  fábrica é `switch.garagem_switch_1=Garagem 1`,
+  `switch.garagem_switch_2=Garagem 2`, `switch.casa_aracaju_piscina=Piscina`,
+  `switch.casa_ewelink_poco=Poco`.
 - Relógio com Montserrat semibold e antialiasing (24 h por padrão).
 - Gato calico com comportamentos (parado, dorme, alonga, pata, olha em volta)
   e splash ditherizado na inicialização.
 - Inversão de cor **desligada** por padrão. A ordem BGR continua disponível e
-  só passa a valer depois de reiniciar.
+  só passa a valer depois de reiniciar. Inversão e brilho pedidos por
+  `POST /config` ou `POST /display` entram na próxima passagem de
+  `display_task` (o HTTP não mexe no painel).
 - Ícone de internet na tela de descanso (URL configurável; espera HTTP 200 ou 204).
 
 ### Ajustes, alertas e OTA
@@ -44,3 +48,5 @@ e da observação do Home Assistant. Testado na placa pelo autor da série.
   A imagem nova se confirma depois de 60 s com Wi-Fi; um reboot antes disso
   volta para o slot anterior.
 - O CI (ESP-IDF 5.3.2) publica `firmware-cyd.bin` e `esp32-ota.bin`.
+- `POST /reboot?key=<chave>` reinicia a placa cerca de 1,5 s depois.
+- `cyd_cfg_load()` monta uma cópia e troca `s_cfg` com um único `memcpy`.

@@ -34,10 +34,15 @@ flash.bat COM3
   (`sem hub`, `sem token`, `token ruim`, `offline`).
 - Token longo até **319** caracteres.
 - Campainha e botão **Porta**: snapshots JPEG no painel (`POST /camera`).
-- Até 5 linhas, no formato `entidade` ou `entidade=Rótulo` (padrão: garagens).
+- Até 5 linhas, no formato `entidade` ou `entidade=Rótulo`. Padrão de fábrica:
+  `switch.garagem_switch_1=Garagem 1`, `switch.garagem_switch_2=Garagem 2`,
+  `switch.casa_aracaju_piscina=Piscina`, `switch.casa_ewelink_poco=Poco`.
 - Relógio Montserrat com antialiasing, gato calico animado, splash ditherizado.
-- Inversão de cor **desligada** por padrão; ordem BGR opcional.
+- Inversão de cor **desligada** por padrão; ordem BGR opcional (vale depois de reiniciar).
 - Ajustes da tela na NVS e na seção **Tela do CYD** (`GET`/`POST /config`).
+  Inversão e brilho gravados por `POST /config` ou `POST /display` entram na
+  próxima passagem da tarefa da tela (`display_task`). O servidor HTTP não
+  mexe no painel nem na backlight.
 - Ícone de internet na tela de descanso.
 - Alertas do HA (`POST /alert`, `GET /alerts`), selo, lista e **LIMPAR TUDO**.
 - OTA por HTTP com duas partições e rollback (`POST /ota`).
@@ -77,12 +82,16 @@ Servidor em [`main/http_server.c`](main/http_server.c), porta **80**:
 - `POST /forget` — apaga o Wi-Fi salvo.
 - `GET /state`, `GET /bots`, `GET /devices`, `GET /hub/discover`, `GET /weather`
 - `POST /chat`, `POST /hub`, `POST /bot`
-- `GET /config`, `POST /config` — ajustes da tela (NVS `app_cfg`)
+- `GET /config`, `POST /config` — ajustes da tela (NVS `app_cfg`). O que mexe
+  no painel (inversão, brilho) só é aplicado na próxima passagem de `display_task`.
 - `POST /camera` — abre o visor de snapshot (exige a chave do aparelho)
-- `POST /display` — inversão, BGR e padrão de teste (exige a chave)
+- `POST /display` — inversão, BGR e padrão de teste (exige a chave). A inversão
+  entra na próxima passagem de `display_task`; BGR só depois de reiniciar.
 - `POST /alert`, `GET /alerts` — alertas do HA (POST exige a chave)
 - `GET /touch` — última leitura do XPT2046
 - `POST /ota` — atualização HTTP (exige a chave)
+- `POST /reboot?key=<chave>` — reinicia a placa cerca de 1,5 s depois da
+  resposta `{"ok":true,"reboot":true}` (exige a chave)
 
 A chave é os **16 primeiros hex** de `SHA-256` do token longo do HA. O guia
 mostra como calculá-la e como o HA chama `/camera` e `/alert`.
