@@ -8,7 +8,7 @@
 static cyd_cfg_t s_cfg;
 static int s_loaded;
 
-#define DEF_ENTS "switch.garagem_switch_1=Garagem 1,switch.garagem_switch_2=Garagem 2,switch.casa_aracaju_piscina=Piscina,switch.casa_ewelink_poco=Poco"
+#define DEF_ENTS "switch.carros_switch_1=Garagem 1,switch.carros_switch_2=Garagem 2,switch.casa_aracaju_piscina=Piscina,switch.casa_ewelink_poco=Poco"
 #define DEF_NET  "http://connectivitycheck.gstatic.com/generate_204"
 
 static void gstr(nvs_handle_t h, const char *k, char *out, size_t n, const char *def)

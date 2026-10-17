@@ -35,7 +35,7 @@ flash.bat COM3
 - Token longo até **319** caracteres.
 - Campainha e botão **Porta**: snapshots JPEG no painel (`POST /camera`).
 - Até 5 linhas, no formato `entidade` ou `entidade=Rótulo`. Padrão de fábrica:
-  `switch.garagem_switch_1=Garagem 1`, `switch.garagem_switch_2=Garagem 2`,
+  `switch.carros_switch_1=Garagem 1`, `switch.carros_switch_2=Garagem 2`,
   `switch.casa_aracaju_piscina=Piscina`, `switch.casa_ewelink_poco=Poco`.
 - Relógio Montserrat com antialiasing, gato calico animado, splash ditherizado.
 - Inversão de cor **desligada** por padrão; ordem BGR opcional (vale depois de reiniciar).
