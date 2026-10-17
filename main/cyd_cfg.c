@@ -8,7 +8,7 @@
 static cyd_cfg_t s_cfg;
 static int s_loaded;
 
-#define DEF_ENTS "switch.garagem_switch_1=Garagem 1,switch.garagem_switch_2=Garagem 2,switch.piscina,switch.poco"
+#define DEF_ENTS "switch.garagem_switch_1=Garagem 1,switch.garagem_switch_2=Garagem 2,switch.casa_aracaju_piscina=Piscina,switch.casa_ewelink_poco=Poco"
 #define DEF_NET  "http://connectivitycheck.gstatic.com/generate_204"
 
 static void gstr(nvs_handle_t h, const char *k, char *out, size_t n, const char *def)
@@ -31,25 +31,30 @@ static uint16_t gu16(nvs_handle_t h, const char *k, uint16_t def)
 
 void cyd_cfg_load(void)
 {
+    /* Build into a scratch copy, then swap in one memcpy: other tasks read
+     * s_cfg without a lock, so never leave a field half-written for long. */
+    static cyd_cfg_t n;
+    memset(&n, 0, sizeof n);
     nvs_handle_t h = 0;
     if (nvs_open("app_cfg", NVS_READONLY, &h) != ESP_OK) h = 0;
-    gstr(h, "c_ents", s_cfg.ents, sizeof s_cfg.ents, DEF_ENTS);
-    s_cfg.pets = gu8(h, "c_pets", 1);
-    gstr(h, "c_cbell", s_cfg.cam_bell, sizeof s_cfg.cam_bell, "camera.frigate_frente_esquerda");
-    gstr(h, "c_cquick", s_cfg.cam_quick, sizeof s_cfg.cam_quick, "camera.frigate_frente_direita");
-    s_cfg.bell_secs = gu8(h, "c_bsecs", 20);
-    s_cfg.cam_ms = gu16(h, "c_camms", 1000);
-    s_cfg.inv = gu8(h, "disp_inv", 0);   /* v4: Rodrigo's panel needs no inversion */
-    s_cfg.bgr = gu8(h, "disp_bgr", 1);
-    s_cfg.bright = gu8(h, "c_bright", 100);
-    s_cfg.saver_s = gu16(h, "c_saver", 30);
-    s_cfg.cat = gu8(h, "c_cat", 1);
-    s_cfg.clk24 = gu8(h, "c_clk24", 1);
-    s_cfg.alerts = gu8(h, "c_alerts", 1);
-    gstr(h, "c_blabel", s_cfg.btn_label, sizeof s_cfg.btn_label, "Porta");
-    s_cfg.btn_icon = gu8(h, "c_bicon", 0);
-    gstr(h, "c_net", s_cfg.net_url, sizeof s_cfg.net_url, DEF_NET);
+    gstr(h, "c_ents", n.ents, sizeof n.ents, DEF_ENTS);
+    n.pets = gu8(h, "c_pets", 1);
+    gstr(h, "c_cbell", n.cam_bell, sizeof n.cam_bell, "camera.frigate_frente_esquerda");
+    gstr(h, "c_cquick", n.cam_quick, sizeof n.cam_quick, "camera.frigate_frente_direita");
+    n.bell_secs = gu8(h, "c_bsecs", 20);
+    n.cam_ms = gu16(h, "c_camms", 1000);
+    n.inv = gu8(h, "disp_inv", 0);   /* v4: Rodrigo's panel needs no inversion */
+    n.bgr = gu8(h, "disp_bgr", 1);
+    n.bright = gu8(h, "c_bright", 100);
+    n.saver_s = gu16(h, "c_saver", 30);
+    n.cat = gu8(h, "c_cat", 1);
+    n.clk24 = gu8(h, "c_clk24", 1);
+    n.alerts = gu8(h, "c_alerts", 1);
+    gstr(h, "c_blabel", n.btn_label, sizeof n.btn_label, "Porta");
+    n.btn_icon = gu8(h, "c_bicon", 0);
+    gstr(h, "c_net", n.net_url, sizeof n.net_url, DEF_NET);
     if (h) nvs_close(h);
+    memcpy(&s_cfg, &n, sizeof s_cfg);
     s_loaded = 1;
 }
 

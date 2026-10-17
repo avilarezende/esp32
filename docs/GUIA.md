@@ -43,9 +43,12 @@ ao HA (não baixa mais o `/api/states` inteiro) e monta a tela:
 - Lugar (Casa), temperatura e umidade quando o HA tem `weather` ou sensores
   de temperatura e umidade.
 - Até **cinco** linhas. Cada item da lista pode ser só a entidade
-  (`switch.piscina`) ou `entidade=Rótulo` (`switch.garagem_switch_1=Garagem 1`).
-  O rótulo fica com no máximo 17 caracteres.
-- Padrão de fábrica: `Garagem 1`, `Garagem 2`, `switch.piscina`, `switch.poco`.
+  (`switch.casa_aracaju_piscina`) ou `entidade=Rótulo`
+  (`switch.garagem_switch_1=Garagem 1`). O rótulo fica com no máximo 17
+  caracteres.
+- Padrão de fábrica: `switch.garagem_switch_1=Garagem 1`,
+  `switch.garagem_switch_2=Garagem 2`, `switch.casa_aracaju_piscina=Piscina`,
+  `switch.casa_ewelink_poco=Poco`. Vale quando a NVS ainda não tem `c_ents`.
   Se a opção de ração estiver ligada, a última linha mostra as porções de hoje
   (Spock, Kirk, Gatas) lidas de
   `sensor.alimentacao_spock_hoje`, `sensor.alimentacao_kirk_hoje` e
@@ -118,8 +121,13 @@ Acentos saem dobrados para ASCII na fonte do painel (`ã` vira `a`).
 ### Cores
 
 A inversão do painel vem **desligada** (`inv=0`), que é o certo para esta
-placa. A ordem **BGR** vem ligada. Inverter aplica na hora; BGR só depois de
-reiniciar. `POST /display` também aceita `test=1` (barras de cor por 15 s).
+placa. A ordem **BGR** vem ligada. `POST /config` e `POST /display` só gravam
+o ajuste e levantam um pedido: inversão e brilho entram na **próxima passagem**
+da tarefa da tela (`display_task`). O servidor HTTP não chama
+`esp_lcd_panel_invert_color()` nem o controle da backlight — fazer isso no
+meio de um quadro SPI travava o painel e o HTTP depois de `POST /config`.
+BGR continua valendo só depois de reiniciar. `POST /display` também aceita
+`test=1` (barras de cor por 15 s).
 
 ## App web no celular
 
@@ -168,8 +176,9 @@ O poller roda a cada ~30 s enquanto houver Wi-Fi.
 
 ### Chave do aparelho
 
-`/camera`, `/alert`, `/display` e `/ota` exigem uma chave: os **16 primeiros
-caracteres hexadecimais** do SHA-256 do token longo (o mesmo salvo no CYD).
+`/camera`, `/alert`, `/display`, `/ota` e `/reboot` exigem uma chave: os
+**16 primeiros caracteres hexadecimais** do SHA-256 do token longo (o mesmo
+salvo no CYD).
 
 ```bash
 printf '%s' 'SEU_TOKEN' | sha256sum | cut -c1-16
@@ -202,6 +211,18 @@ Para dispensar um alerta pelo HA: `POST /alert` com `dismiss=<id>` ou
 `GET /alerts` devolve a lista em JSON. `GET /touch` devolve
 `raw_x`, `raw_y`, `x`, `y` e `count` da última leitura do XPT2046.
 
+### Reinício remoto
+
+`POST /reboot?key=SUA_CHAVE_16` responde `{"ok":true,"reboot":true}` e
+reinicia a placa cerca de **1,5 s** depois (o mesmo atraso do OTA, para a
+resposta HTTP sair antes). Sem a chave a resposta é `403` com
+`{"ok":false,"error":"key"}`. Serve para recuperar o painel sem desligar da
+tomada.
+
+```bash
+curl -X POST "http://IP_DO_CYD/reboot?key=SUA_CHAVE_16"
+```
+
 ## Tempos
 
 | Evento | Tempo |
@@ -213,6 +234,7 @@ Para dispensar um alerta pelo HA: `POST /alert` com `dismiss=<id>` ou
 | Visor da campainha / Porta | 20 s (ajustável, 3–120 s) |
 | Toque longo limpa alertas | 0,8 s |
 | Confirmação do OTA (rollback) | 60 s com Wi-Fi |
+| Reinício de `POST /reboot` e do OTA | ~1,5 s depois da resposta |
 
 ## Build
 

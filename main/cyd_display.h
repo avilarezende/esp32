@@ -10,11 +10,12 @@ esp_err_t cyd_display_start(void);
  * A tap closes the viewer early. Safe to call from any task. */
 void cyd_display_show_camera(const char *entity, int seconds);
 
-/* Panel colour options, saved in NVS. invert applies at once; bgr needs a
- * reboot. test=1 shows colour bars (red, green, blue, white, black) for 15 s. */
+/* Panel colour options, saved in NVS. invert and brightness are applied on
+ * the next display_task pass (not from the HTTP task); bgr needs a reboot.
+ * test=1 shows colour bars (red, green, blue, white, black) for 15 s. */
 void cyd_display_set_color(int invert, int bgr, int test);
 
-/* Re-apply settings from cyd_cfg() (inversion, brightness). */
+/* Ask display_task to re-apply cyd_cfg() (inversion, brightness). */
 void cyd_display_apply_cfg(void);
 
 /* Alerts shown as banner + badge; level 0 info, 1 warning, 2 critical;
