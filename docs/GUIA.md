@@ -44,10 +44,10 @@ ao HA (não baixa mais o `/api/states` inteiro) e monta a tela:
   de temperatura e umidade.
 - Até **cinco** linhas. Cada item da lista pode ser só a entidade
   (`switch.casa_aracaju_piscina`) ou `entidade=Rótulo`
-  (`switch.garagem_switch_1=Garagem 1`). O rótulo fica com no máximo 17
+  (`switch.carros_switch_1=Garagem 1`). O rótulo fica com no máximo 17
   caracteres.
-- Padrão de fábrica: `switch.garagem_switch_1=Garagem 1`,
-  `switch.garagem_switch_2=Garagem 2`, `switch.casa_aracaju_piscina=Piscina`,
+- Padrão de fábrica: `switch.carros_switch_1=Garagem 1`,
+  `switch.carros_switch_2=Garagem 2`, `switch.casa_aracaju_piscina=Piscina`,
   `switch.casa_ewelink_poco=Poco`. Vale quando a NVS ainda não tem `c_ents`.
   Se a opção de ração estiver ligada, a última linha mostra as porções de hoje
   (Spock, Kirk, Gatas) lidas de
