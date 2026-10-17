@@ -306,6 +306,21 @@ static esp_err_t config_post_handler(httpd_req_t *req)
 /* ---- OTA: POST /ota?key=.. with the raw esp32.bin, or ?url=http://.../esp32.bin ---- */
 static void reboot_soon(void *arg) { (void)arg; vTaskDelay(pdMS_TO_TICKS(1500)); esp_restart(); }
 
+/* POST /reboot?key=.. -> restart in ~1.5 s (no unplugging after a freeze). */
+static esp_err_t reboot_post_handler(httpd_req_t *req)
+{
+    char body[POST_BODY_MAXLEN] = {0};
+    if (req->content_len > 0 && read_body(req, body, sizeof(body)) < 0) return ESP_FAIL;
+    httpd_resp_set_type(req, "application/json");
+    if (!key_ok(req, body)) {
+        httpd_resp_set_status(req, "403 Forbidden");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"key\"}");
+    }
+    httpd_resp_sendstr(req, "{\"ok\":true,\"reboot\":true}");
+    xTaskCreate(reboot_soon, "rb", 2048, NULL, 5, NULL);
+    return ESP_OK;
+}
+
 static esp_err_t ota_post_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json");
@@ -506,6 +521,7 @@ httpd_handle_t http_config_server_start(void)
         { .uri = "/config",       .method = HTTP_GET,  .handler = config_get_handler },
         { .uri = "/config",       .method = HTTP_POST, .handler = config_post_handler },
         { .uri = "/ota",          .method = HTTP_POST, .handler = ota_post_handler },
+        { .uri = "/reboot",       .method = HTTP_POST, .handler = reboot_post_handler },
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
         httpd_register_uri_handler(server, &uris[i]);

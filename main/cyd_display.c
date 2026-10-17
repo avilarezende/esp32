@@ -514,18 +514,39 @@ void cyd_display_show_camera(const char *entity, int seconds)
     portEXIT_CRITICAL(&s_cam_mux);
 }
 
+/* The panel (SPI) and backlight (LEDC) belong to the display task. Other
+ * tasks (HTTP server) only raise these flags; display_task applies them.
+ * Touching the panel from the HTTP task while a frame was being pushed
+ * deadlocked both tasks (CYD froze after POST /config). */
+static volatile int s_cfg_pending;
+static volatile int s_inv_pending = -1;
+
 void cyd_display_apply_cfg(void)
 {
-    if (s_panel) esp_lcd_panel_invert_color(s_panel, cyd_cfg()->inv != 0);
-    if (s_screen_on) bl_set(1);
+    s_cfg_pending = 1;
 }
 
 void cyd_display_set_color(int invert, int bgr, int test)
 {
     if (invert >= 0) cyd_cfg_set_u8("disp_inv", invert ? 1 : 0);
     if (bgr >= 0) cyd_cfg_set_u8("disp_bgr", bgr ? 1 : 0);
-    if (invert >= 0 && s_panel) esp_lcd_panel_invert_color(s_panel, invert != 0);
+    if (invert >= 0) s_inv_pending = invert ? 1 : 0;
     if (test) s_test_until = esp_timer_get_time() + 15000000LL;
+}
+
+/* Display task only. */
+static void apply_pending(void)
+{
+    int inv = s_inv_pending;
+    if (inv >= 0) {
+        s_inv_pending = -1;
+        if (s_panel) esp_lcd_panel_invert_color(s_panel, inv != 0);
+    }
+    if (s_cfg_pending) {
+        s_cfg_pending = 0;
+        if (s_panel) esp_lcd_panel_invert_color(s_panel, cyd_cfg()->inv != 0);
+        if (s_screen_on) bl_set(1);
+    }
 }
 
 static void display_task(void *arg)
@@ -545,6 +566,7 @@ static void display_task(void *arg)
 
     while (1) {
         maybe_sntp();
+        apply_pending();
 
         /* Camera requested by HA (doorbell) or by the quick button. */
         char cam[64] = {0};
