@@ -290,7 +290,7 @@ static esp_err_t alert_post_handler(httpd_req_t *req)
 
 static void alerts_json_fn(char *b, size_t n) { cyd_alerts_json(b, n); }
 static void touch_json_fn(char *b, size_t n) { cyd_touch_json(b, n); }
-static esp_err_t touch_get_handler(httpd_req_t *req) { return send_json(req, touch_json_fn, 128); }
+static esp_err_t touch_get_handler(httpd_req_t *req) { return send_json(req, touch_json_fn, 256); }
 static esp_err_t alerts_get_handler(httpd_req_t *req) { return send_json(req, alerts_json_fn, 1200); }
 
 /* ---- Settings (same LAN trust as /hub) ---- */

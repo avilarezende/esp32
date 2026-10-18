@@ -85,6 +85,15 @@ Duas formas de abrir:
 - **Botão Porta.** Um toque no canto superior direito abre a câmera rápida
   pelo mesmo tempo.
 
+O painel aceita até **10** transferências SPI enfileiradas, e o desenho de
+um bloco volta antes da transferência terminar. O visor guarda um buffer de
+linha por vaga dessa fila. Quando as dez estão ocupadas, espera a fila
+esvaziar antes de reutilizar um buffer — senão o JPEG sai rasgado.
+
+Cada quadro renova o batimento da tarefa da tela. Se o download do snapshot
+ou o decodificador não voltam em **45 s**, o watchdog reinicia a placa
+(veja [Travamento da tela](#travamento-da-tela)).
+
 ### Protetor de tela
 
 Após o tempo de descanso (padrão **30 s**) sem toque, o relógio grande toma a
@@ -208,8 +217,9 @@ Troque `192.168.0.50` pelo IP do CYD e os `entity_id` do pacote pelos seus.
 Para dispensar um alerta pelo HA: `POST /alert` com `dismiss=<id>` ou
 `clear=1`.
 
-`GET /alerts` devolve a lista em JSON. `GET /touch` devolve
-`raw_x`, `raw_y`, `x`, `y` e `count` da última leitura do XPT2046.
+`GET /alerts` devolve a lista em JSON. `GET /touch` devolve a última leitura
+do XPT2046 e o diagnóstico da tarefa da tela
+([Travamento da tela](#travamento-da-tela)).
 
 ### Reinício remoto
 
@@ -221,6 +231,27 @@ tomada.
 
 ```bash
 curl -X POST "http://IP_DO_CYD/reboot?key=SUA_CHAVE_16"
+```
+
+### Travamento da tela
+
+Uma tarefa (`cyd_wdt`) olha o batimento de `display_task`. Se a tarefa da
+tela não completa uma volta em **45 s**, a placa reinicia sozinha
+(`esp_restart`). Isso vale dentro do visor da câmera: cada quadro renova o
+batimento, e um `GET` do snapshot que passa de 45 s também conta.
+
+`GET /touch` não exige a chave. Serve para ver o travamento sem o cabo:
+
+| Campo | Significado |
+|-------|-------------|
+| `raw_x`, `raw_y`, `x`, `y`, `count` | Última leitura do XPT2046 |
+| `uptime_s` | Segundos desde o boot |
+| `disp_age_ms` | Milissegundos desde a última volta de `display_task` (`-1` antes da primeira) |
+| `reset` | `esp_reset_reason()`: 1 power-on, 3 `esp_restart` (inclui este watchdog), 4 panic, 5 interrupt WDT, 6 task WDT, 9 brownout |
+| `heap`, `heap_min` | Heap livre agora e o mínimo desde o boot |
+
+```bash
+curl -s "http://IP_DO_CYD/touch"
 ```
 
 ## Tempos
@@ -235,6 +266,7 @@ curl -X POST "http://IP_DO_CYD/reboot?key=SUA_CHAVE_16"
 | Toque longo limpa alertas | 0,8 s |
 | Confirmação do OTA (rollback) | 60 s com Wi-Fi |
 | Reinício de `POST /reboot` e do OTA | ~1,5 s depois da resposta |
+| Watchdog da tarefa da tela | 45 s sem uma volta de `display_task` (câmera incluída) |
 
 ## Build
 

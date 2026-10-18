@@ -24,3 +24,12 @@ void cyd_alert_push(const char *id, const char *title, const char *msg, int leve
 void cyd_alert_dismiss(const char *id);
 void cyd_alerts_json(char *buf, size_t n);
 void cyd_touch_json(char *buf, size_t n);
+
+/* SPI color transfers the ILI9341 panel IO may have in flight
+ * (`trans_queue_depth`). `esp_lcd_panel_draw_bitmap` returns before they
+ * finish, so a buffer is only safe to rewrite after `cyd_lcd_drain` or after
+ * this many newer draws have themselves been drained. */
+#define CYD_LCD_TRANS_QUEUE 10
+
+/* Block until queued panel color transfers finish. Display task only. */
+void cyd_lcd_drain(void);

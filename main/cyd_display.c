@@ -27,6 +27,8 @@
 #include "cyd_cfg.h"
 #include "driver/ledc.h"
 #include "esp_random.h"
+#include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "ha_client.h"
 #include "wifi_manager.h"
 
@@ -51,6 +53,7 @@ static const char *TAG = "cyd";
 #define SLEEP_MS   (40LL * 60LL * 1000LL)
 
 static esp_lcd_panel_handle_t s_panel;
+static esp_lcd_panel_io_handle_t s_lcd_io;
 static spi_device_handle_t s_touch;
 static int s_sntp_started;
 static int s_screen_on = 1;
@@ -224,9 +227,32 @@ static int touch_down(void)
 /* Touch position in screen coordinates (landscape). Uses the usual CYD
  * calibration (raw X 200..3700 -> 0..319, raw Y 240..3800 -> 0..239). */
 static volatile int s_traw_x, s_traw_y, s_tx = -1, s_ty = -1, s_tcount;
+/* Display-task heartbeat: a watchdog task reboots the board if it stalls. */
+static volatile int64_t s_disp_beat;
+#define DISP_STALL_US (45LL * 1000000LL)
+
 void cyd_touch_json(char *buf, size_t n)
 {
-    snprintf(buf, n, "{\"raw_x\":%d,\"raw_y\":%d,\"x\":%d,\"y\":%d,\"count\":%d}", s_traw_x, s_traw_y, s_tx, s_ty, s_tcount);
+    int64_t now = esp_timer_get_time();
+    snprintf(buf, n, "{\"raw_x\":%d,\"raw_y\":%d,\"x\":%d,\"y\":%d,\"count\":%d,"
+             "\"uptime_s\":%lld,\"disp_age_ms\":%lld,\"reset\":%d,\"heap\":%u,\"heap_min\":%u}",
+             s_traw_x, s_traw_y, s_tx, s_ty, s_tcount, (long long)(now / 1000000),
+             (long long)(s_disp_beat ? (now - s_disp_beat) / 1000 : -1), (int)esp_reset_reason(),
+             (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size());
+}
+
+static void disp_wdt_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        int64_t beat = s_disp_beat;
+        if (beat && esp_timer_get_time() - beat > DISP_STALL_US) {
+            ESP_LOGE(TAG, "display task stalled %lld ms, rebooting", (long long)((esp_timer_get_time() - beat) / 1000));
+            vTaskDelay(pdMS_TO_TICKS(200));
+            esp_restart();
+        }
+    }
 }
 
 static int touch_xy(int *sx, int *sy)
@@ -337,6 +363,15 @@ static void maybe_sntp(void)
     }
 }
 
+void cyd_lcd_drain(void)
+{
+    /* tx_param waits for every queued color transfer, then polls a command.
+     * ILI9341 NOP (0x00) does not change the panel. */
+    if (s_lcd_io) {
+        esp_lcd_panel_io_tx_param(s_lcd_io, 0x00, NULL, 0);
+    }
+}
+
 static esp_err_t panel_bringup(void)
 {
     gpio_config_t bl = {
@@ -373,13 +408,14 @@ static esp_err_t panel_bringup(void)
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
         .spi_mode = 0,
-        .trans_queue_depth = 10,
+        .trans_queue_depth = CYD_LCD_TRANS_QUEUE,
     };
     err = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_cfg, &io);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "lcd panel io failed: %s", esp_err_to_name(err));
         return err;
     }
+    s_lcd_io = io;
 
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = -1,
@@ -477,6 +513,7 @@ static void run_camera(const char *entity, int secs)
     int fails = 0;
     while (esp_timer_get_time() < until) {
         int64_t t0 = esp_timer_get_time();
+        s_disp_beat = t0;
         uint8_t *jpg = NULL;
         int len = 0;
         if (ha_client_fetch_camera(entity, &jpg, &len) == ESP_OK &&
@@ -565,6 +602,7 @@ static void display_task(void *arg)
     memset(alert_ids, 0, sizeof alert_ids);
 
     while (1) {
+        s_disp_beat = esp_timer_get_time();
         maybe_sntp();
         apply_pending();
 
@@ -754,6 +792,8 @@ esp_err_t cyd_display_start(void)
     if (ha_client_start() != ESP_OK) {
         ESP_LOGW(TAG, "Home Assistant poller did not start");
     }
+    s_disp_beat = esp_timer_get_time();
+    xTaskCreate(disp_wdt_task, "cyd_wdt", 2560, NULL, 5, NULL);
     if (xTaskCreate(display_task, "cyd", 8192, NULL, 1, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
@@ -771,6 +811,7 @@ void cyd_alerts_json(char *buf, size_t n) { if (n) snprintf(buf, n, "[]"); }
 
 
 void cyd_display_show_camera(const char *entity, int seconds) { (void)entity; (void)seconds; }
+void cyd_lcd_drain(void) {}
 void cyd_display_set_color(int invert, int bgr, int test) { (void)invert; (void)bgr; (void)test; }
 
 

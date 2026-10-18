@@ -46,7 +46,10 @@ flash.bat COM3
 - Ícone de internet na tela de descanso.
 - Alertas do HA (`POST /alert`, `GET /alerts`), selo, lista e **LIMPAR TUDO**.
 - OTA por HTTP com duas partições e rollback (`POST /ota`).
-- `GET /touch` para depurar o toque.
+- Se a tarefa da tela não der uma volta em **45 s** (visor da câmera incluído),
+  o CYD reinicia sozinho.
+- `GET /touch` para depurar o toque, com `uptime_s`, `disp_age_ms`, `reset`,
+  `heap` e `heap_min`.
 
 ## Requisitos
 
@@ -88,7 +91,9 @@ Servidor em [`main/http_server.c`](main/http_server.c), porta **80**:
 - `POST /display` — inversão, BGR e padrão de teste (exige a chave). A inversão
   entra na próxima passagem de `display_task`; BGR só depois de reiniciar.
 - `POST /alert`, `GET /alerts` — alertas do HA (POST exige a chave)
-- `GET /touch` — última leitura do XPT2046
+- `GET /touch` — última leitura do XPT2046, mais `uptime_s`, `disp_age_ms`
+  (ms desde a última volta de `display_task`, ou `-1`), `reset`
+  (`esp_reset_reason`) e `heap` / `heap_min`
 - `POST /ota` — atualização HTTP (exige a chave)
 - `POST /reboot?key=<chave>` — reinicia a placa cerca de 1,5 s depois da
   resposta `{"ok":true,"reboot":true}` (exige a chave)
