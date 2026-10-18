@@ -27,6 +27,8 @@
 #include "cyd_cfg.h"
 #include "driver/ledc.h"
 #include "esp_random.h"
+#include "esp_system.h"
+#include "esp_heap_caps.h"
 #include "ha_client.h"
 #include "wifi_manager.h"
 
@@ -224,9 +226,32 @@ static int touch_down(void)
 /* Touch position in screen coordinates (landscape). Uses the usual CYD
  * calibration (raw X 200..3700 -> 0..319, raw Y 240..3800 -> 0..239). */
 static volatile int s_traw_x, s_traw_y, s_tx = -1, s_ty = -1, s_tcount;
+/* Display-task heartbeat: a watchdog task reboots the board if it stalls. */
+static volatile int64_t s_disp_beat;
+#define DISP_STALL_US (45LL * 1000000LL)
+
 void cyd_touch_json(char *buf, size_t n)
 {
-    snprintf(buf, n, "{\"raw_x\":%d,\"raw_y\":%d,\"x\":%d,\"y\":%d,\"count\":%d}", s_traw_x, s_traw_y, s_tx, s_ty, s_tcount);
+    int64_t now = esp_timer_get_time();
+    snprintf(buf, n, "{\"raw_x\":%d,\"raw_y\":%d,\"x\":%d,\"y\":%d,\"count\":%d,"
+             "\"uptime_s\":%lld,\"disp_age_ms\":%lld,\"reset\":%d,\"heap\":%u,\"heap_min\":%u}",
+             s_traw_x, s_traw_y, s_tx, s_ty, s_tcount, (long long)(now / 1000000),
+             (long long)(s_disp_beat ? (now - s_disp_beat) / 1000 : -1), (int)esp_reset_reason(),
+             (unsigned)esp_get_free_heap_size(), (unsigned)esp_get_minimum_free_heap_size());
+}
+
+static void disp_wdt_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        int64_t beat = s_disp_beat;
+        if (beat && esp_timer_get_time() - beat > DISP_STALL_US) {
+            ESP_LOGE(TAG, "display task stalled %lld ms, rebooting", (long long)((esp_timer_get_time() - beat) / 1000));
+            vTaskDelay(pdMS_TO_TICKS(200));
+            esp_restart();
+        }
+    }
 }
 
 static int touch_xy(int *sx, int *sy)
@@ -477,6 +502,7 @@ static void run_camera(const char *entity, int secs)
     int fails = 0;
     while (esp_timer_get_time() < until) {
         int64_t t0 = esp_timer_get_time();
+        s_disp_beat = t0;
         uint8_t *jpg = NULL;
         int len = 0;
         if (ha_client_fetch_camera(entity, &jpg, &len) == ESP_OK &&
@@ -565,6 +591,7 @@ static void display_task(void *arg)
     memset(alert_ids, 0, sizeof alert_ids);
 
     while (1) {
+        s_disp_beat = esp_timer_get_time();
         maybe_sntp();
         apply_pending();
 
@@ -754,6 +781,8 @@ esp_err_t cyd_display_start(void)
     if (ha_client_start() != ESP_OK) {
         ESP_LOGW(TAG, "Home Assistant poller did not start");
     }
+    s_disp_beat = esp_timer_get_time();
+    xTaskCreate(disp_wdt_task, "cyd_wdt", 2560, NULL, 5, NULL);
     if (xTaskCreate(display_task, "cyd", 8192, NULL, 1, NULL) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
