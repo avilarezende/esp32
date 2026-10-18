@@ -53,6 +53,7 @@ static const char *TAG = "cyd";
 #define SLEEP_MS   (40LL * 60LL * 1000LL)
 
 static esp_lcd_panel_handle_t s_panel;
+static esp_lcd_panel_io_handle_t s_lcd_io;
 static spi_device_handle_t s_touch;
 static int s_sntp_started;
 static int s_screen_on = 1;
@@ -362,6 +363,15 @@ static void maybe_sntp(void)
     }
 }
 
+void cyd_lcd_drain(void)
+{
+    /* tx_param waits for every queued color transfer, then polls a command.
+     * ILI9341 NOP (0x00) does not change the panel. */
+    if (s_lcd_io) {
+        esp_lcd_panel_io_tx_param(s_lcd_io, 0x00, NULL, 0);
+    }
+}
+
 static esp_err_t panel_bringup(void)
 {
     gpio_config_t bl = {
@@ -398,13 +408,14 @@ static esp_err_t panel_bringup(void)
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
         .spi_mode = 0,
-        .trans_queue_depth = 10,
+        .trans_queue_depth = CYD_LCD_TRANS_QUEUE,
     };
     err = esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_cfg, &io);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "lcd panel io failed: %s", esp_err_to_name(err));
         return err;
     }
+    s_lcd_io = io;
 
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = -1,
@@ -800,6 +811,7 @@ void cyd_alerts_json(char *buf, size_t n) { if (n) snprintf(buf, n, "[]"); }
 
 
 void cyd_display_show_camera(const char *entity, int seconds) { (void)entity; (void)seconds; }
+void cyd_lcd_drain(void) {}
 void cyd_display_set_color(int invert, int bgr, int test) { (void)invert; (void)bgr; (void)test; }
 
 

@@ -2,6 +2,7 @@
 #include <string.h>
 #include "esp32/rom/tjpgd.h"
 #include "esp_log.h"
+#include "cyd_display.h"
 #include "cyd_scene.h"
 
 static const char *TAG = "cam";
@@ -14,8 +15,12 @@ typedef struct {
 } jctx_t;
 
 static uint8_t s_work[3100];
-static uint16_t s_blk[2][16 * 16 * 4];   /* scale 0 MCU is at most 16x16 */
+/* Scale 0 MCU is at most 16x16; the extra factor of 4 is headroom for the
+ * RGB565 copy. One buffer per queued SPI color transfer: draw_bitmap returns
+ * while the queue (CYD_LCD_TRANS_QUEUE) may still be clocking older blocks. */
+static uint16_t s_blk[CYD_LCD_TRANS_QUEUE][16 * 16 * 4];
 static int s_pp;
+static int s_queued;
 
 static UINT in_fn(JDEC *jd, BYTE *buf, UINT n)
 {
@@ -36,8 +41,12 @@ static UINT out_fn(JDEC *jd, void *bmp, JRECT *r)
     int cx0 = x0 < 0 ? 0 : x0, cy0 = y0 < 0 ? 0 : y0;
     int cx1 = x1 > CYD_W ? CYD_W : x1, cy1 = y1 > CYD_H ? CYD_H : y1;
     if (cx0 >= cx1 || cy0 >= cy1) return 1;
+    if (s_queued >= CYD_LCD_TRANS_QUEUE) {
+        cyd_lcd_drain();
+        s_queued = 0;
+    }
     uint16_t *dst = s_blk[s_pp];
-    s_pp ^= 1;
+    if (++s_pp >= CYD_LCD_TRANS_QUEUE) s_pp = 0;
     const uint8_t *rgb = (const uint8_t *)bmp;
     int k = 0;
     for (int y = cy0; y < cy1; y++) {
@@ -48,6 +57,7 @@ static UINT out_fn(JDEC *jd, void *bmp, JRECT *r)
         }
     }
     esp_lcd_panel_draw_bitmap(c->panel, cx0, cy0, cx1, cy1, dst);
+    s_queued++;
     return 1;
 }
 
@@ -55,6 +65,11 @@ esp_err_t cyd_camera_draw(esp_lcd_panel_handle_t panel, const uint8_t *jpg, int 
 {
     JDEC jd;
     jctx_t c = { .src = jpg, .len = len, .panel = panel };
+    /* Drop whatever the previous frame (or fill) still has on the wire
+     * before the first MCU reuses s_blk[0]. */
+    cyd_lcd_drain();
+    s_queued = 0;
+    s_pp = 0;
     JRESULT r = jd_prepare(&jd, in_fn, s_work, sizeof s_work, &c);
     if (r != JDR_OK) {
         ESP_LOGW(TAG, "jd_prepare %d", r);
