@@ -22,6 +22,12 @@ e da observação do Home Assistant. Testado na placa pelo autor da série.
 - Campainha e botão rápido abrem um visor de snapshot JPEG
   (`GET /api/camera_proxy` no HA, decodificado com o TJpgDec da ROM).
   O botão padrão se chama **Porta** e aponta para a câmera da frente direita.
+- O visor reserva um buffer de linha para cada transferência SPI que o
+  painel pode deixar na fila (10) e só reutiliza um buffer depois que essa
+  fila esvazia. Dois buffers para dez transferências rasgavam o JPEG.
+- Se `display_task` não completa uma volta em **45 s**, uma tarefa de
+  watchdog reinicia a placa. O visor da câmera renova esse batimento a cada
+  quadro; um snapshot que não volta em 45 s também conta como travamento.
 - Até cinco linhas. Sintaxe `entidade` ou `entidade=Rótulo`. O padrão de
   fábrica é `switch.carros_switch_1=Garagem 1`,
   `switch.carros_switch_2=Garagem 2`, `switch.casa_aracaju_piscina=Piscina`,
@@ -45,7 +51,9 @@ e da observação do Home Assistant. Testado na placa pelo autor da série.
   (`GET /config`, `POST /config`).
 - Alertas enviados pelo HA: `POST /alert`, `GET /alerts`, selo na home e no
   descanso, lista, botão **LIMPAR TUDO** e toque longo (0,8 s) para limpar.
-- `GET /touch` devolve a última leitura do touch para depuração.
+- `GET /touch` devolve a última leitura do touch e, para diagnosticar
+  travamento de longe: `uptime_s`, `disp_age_ms` (ms desde a última volta
+  da tela, ou `-1`), `reset` (`esp_reset_reason`) e `heap` / `heap_min`.
 - Duas partições OTA (`ota_0` e `ota_1`, 0x1F0000 cada) e rollback. A NVS
   permanece em `0x9000`. Quem já tinha a tabela antiga precisa de um último
   flash por cabo; as trocas seguintes são `POST /ota` com `esp32-ota.bin`.
