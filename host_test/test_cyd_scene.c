@@ -192,6 +192,31 @@ static void test_sleep_and_bars_and_stable(void)
     TEST_ASSERT_EQUAL_INT(0, memcmp(again, frame, sizeof frame));
 }
 
+static void test_cat_poses_keep_the_calico(void)
+{
+    cyd_scene_t s;
+    static uint16_t idle[CYD_W * CYD_H];
+    int poses[4] = {CYD_CAT_SLEEP, CYD_CAT_STRETCH, CYD_CAT_PURR, CYD_CAT_ALERT};
+    int phases[4] = {4, 8, 2, 0};
+    int i;
+
+    base_scene(&s);
+    s.mode = CYD_UI_SAVER;
+    s.behavior = CYD_CAT_IDLE;
+    s.phase = 4;
+    paint(&s);
+    TEST_ASSERT_TRUE(count_eq(cream) > 80);
+    memcpy(idle, frame, sizeof idle);
+
+    for (i = 0; i < 4; i++) {
+        s.behavior = poses[i];
+        s.phase = phases[i];
+        paint(&s);
+        TEST_ASSERT_TRUE(count_eq(cream) > 40);
+        TEST_ASSERT_TRUE(memcmp(idle, frame, sizeof idle) != 0);
+    }
+}
+
 static void test_empty_home_keeps_the_cat(void)
 {
     cyd_scene_t s;
@@ -211,6 +236,7 @@ int main(void)
     RUN_TEST(test_status_bar_is_shared);
     RUN_TEST(test_home_rows_card_and_banner);
     RUN_TEST(test_sleep_and_bars_and_stable);
+    RUN_TEST(test_cat_poses_keep_the_calico);
     RUN_TEST(test_empty_home_keeps_the_cat);
     return UNITY_END();
 }

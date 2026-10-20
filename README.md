@@ -37,7 +37,9 @@ flash.bat COM3
 - Até 5 linhas, no formato `entidade` ou `entidade=Rótulo`. Padrão de fábrica:
   `switch.carros_switch_1=Garagem 1`, `switch.carros_switch_2=Garagem 2`,
   `switch.casa_aracaju_piscina=Piscina`, `switch.casa_ewelink_poco=Poco`.
-- Relógio Montserrat com antialiasing, gato calico animado, splash ditherizado.
+- Relógio Montserrat com antialiasing, gato calico em sprites RLE (respira,
+  pisca, rabo, orelha, alonga, dorme à noite no protetor, alerta no HA,
+  ronrona no toque) e splash ditherizado.
 - Tema escuro único: barra de status (hora ou título, selo, estado do HA,
   ícone de internet), cartões arredondados para clima, dispositivos e alertas,
   botão **Porta** no mesmo canto. Faixas que não mudaram não são reenviadas

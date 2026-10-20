@@ -12,6 +12,15 @@
 #define CYD_UI_SLEEP  3
 #define CYD_UI_ALERTS 4
 
+/* Cat pose. Idle blinks, breathes, sways its tail and sometimes flicks an ear.
+ * Sleep is the night screensaver. Stretch yawns. Purr is a touch. Alert is a
+ * new Home Assistant notification (and an occasional look around). */
+#define CYD_CAT_IDLE    0
+#define CYD_CAT_SLEEP   1
+#define CYD_CAT_STRETCH 2
+#define CYD_CAT_PURR    3
+#define CYD_CAT_ALERT   4
+
 #define CYD_ALERT_ROWS 4
 typedef struct {
     char title[32];
@@ -40,15 +49,16 @@ typedef struct {
     int has_temp;
     int has_humidity;
     int blink;
-    int tail;   /* 0..5, shifts the tail */
+    int tail;   /* kept; the painter drives the tail from phase */
     int row_count;
     cyd_row_t rows[CYD_ROW_MAX];
     char place[16];
     char status[20];
     char ip[20];
     int cam_btn;     /* draw the "frente direita" camera button (home) */
-    int behavior;    /* cat: 0 idle, 1 sleep, 2 stretch, 3 paw, 4 look around */
+    int behavior;    /* CYD_CAT_IDLE .. CYD_CAT_ALERT */
     int phase;       /* animation step inside the behaviour */
+    int cat_salt;    /* shifts blink/ear timing so cycles are not identical */
     int test_bars;   /* colour test pattern */
     int net_state;   /* 0 no Wi-Fi, 1 Wi-Fi without internet, 2 internet ok, 3 unknown */
     int cat_on;

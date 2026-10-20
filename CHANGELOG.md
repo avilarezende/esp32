@@ -47,8 +47,11 @@ e da observação do Home Assistant. Testado na placa pelo autor da série.
   rótulos **Garagem 1** e **Garagem 2**. `switch.garagem_switch_1/2` eram um
   interruptor antigo, fora do ar. Vale quando a NVS ainda não tem `c_ents`.
 - Relógio com Montserrat semibold e antialiasing (24 h por padrão).
-- Gato calico com comportamentos (parado, dorme, alonga, pata, olha em volta)
-  e splash ditherizado na inicialização.
+- Gato calico redesenhado em sprites de paleta com RLE (borda já misturada
+  ao fundo escuro, sem framebuffer extra). Respira, pisca, balança o rabo,
+  mexe a orelha, alonga e boceja, dorme no protetor entre 21 h e 6 h, olha
+  para cima quando chega um alerta do HA e ronrona no toque. O tempo de
+  cada pose é aleatório. O splash ditherizado da inicialização continua.
 - Inversão de cor **desligada** por padrão. A ordem BGR continua disponível e
   só passa a valer depois de reiniciar. Inversão e brilho pedidos por
   `POST /config` ou `POST /display` entram na próxima passagem de
