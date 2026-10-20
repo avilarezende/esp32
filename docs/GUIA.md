@@ -185,9 +185,9 @@ O poller roda a cada ~30 s enquanto houver Wi-Fi.
 
 ### Chave do aparelho
 
-`/camera`, `/alert`, `/display`, `/ota` e `/reboot` exigem uma chave: os
-**16 primeiros caracteres hexadecimais** do SHA-256 do token longo (o mesmo
-salvo no CYD).
+`/camera`, `/alert`, `/display`, `/ota`, `/reboot` e `/screenshot` exigem uma
+chave: os **16 primeiros caracteres hexadecimais** do SHA-256 do token longo
+(o mesmo salvo no CYD).
 
 ```bash
 printf '%s' 'SEU_TOKEN' | sha256sum | cut -c1-16
@@ -204,6 +204,9 @@ O arquivo [homeassistant/cyd.yaml](homeassistant/cyd.yaml) define:
   painel, não a porta do HA) com `entity` e `seconds`.
 - `rest_command.cyd_alert` — `POST http://IP_DO_CYD/alert` com `id`, `title`,
   `message`, `level` e `duration`.
+- `shell_command.cyd_screenshot` — `curl` para `GET /screenshot`, gravando
+  `/config/www/cyd/screen.bmp`.
+- O botão **CYD: capturar tela** e a câmera `local_file` **CYD tela**.
 - Uma automação de exemplo: campainha liga → abre a câmera da frente esquerda.
 
 `secrets.yaml`:
@@ -211,6 +214,7 @@ O arquivo [homeassistant/cyd.yaml](homeassistant/cyd.yaml) define:
 ```yaml
 cyd_camera_url: "http://192.168.0.50/camera?key=SUA_CHAVE_16"
 cyd_alert_url: "http://192.168.0.50/alert?key=SUA_CHAVE_16"
+cyd_screenshot_cmd: 'curl -fsS -o /config/www/cyd/screen.bmp "http://192.168.0.50/screenshot?key=SUA_CHAVE_16"'
 ```
 
 Troque `192.168.0.50` pelo IP do CYD e os `entity_id` do pacote pelos seus.
@@ -232,6 +236,41 @@ tomada.
 ```bash
 curl -X POST "http://IP_DO_CYD/reboot?key=SUA_CHAVE_16"
 ```
+
+### Captura de tela
+
+`GET /screenshot?key=SUA_CHAVE_16` devolve a tela em BMP de 24 bits, 320×240
+(230 454 bytes: cabeçalho de 54 e as linhas de baixo para cima). A resposta
+sai em pedaços; o firmware não monta um quadro inteiro na RAM.
+
+A chave é a mesma de `POST /reboot`. Sem ela, ou com o valor errado, a
+resposta é `403` com `{"ok":false,"error":"key"}`.
+
+O servidor HTTP só enfileira o pedido. Quem lê o painel é a `display_task`
+— o mesmo desenho de `POST /config`, em que o HTTP no meio de um quadro SPI
+travava a placa. A tarefa lê uma linha por vez: se houver um sprite ou
+framebuffer, copia dali; senão, lê a GRAM do ILI9341 (MISO no GPIO 12). Cada
+faixa de 4 linhas (2,5 KB de RGB565) volta por uma fila. O handler converte
+para BMP e envia. Se a primeira faixa não chega em cerca de **3 s**, a
+resposta é `503` com `{"ok":false,"error":"timeout"}` (ou `"busy"` se já
+existe uma captura). Enquanto a leitura corre, o batimento do watchdog de
+45 s continua sendo renovado.
+
+```bash
+curl -fsS -o tela.bmp "http://IP_DO_CYD/screenshot?key=SUA_CHAVE_16"
+```
+
+No Home Assistant o pacote faz três coisas:
+
+1. `shell_command` com `curl`, gravando em `/config/www/cyd/screen.bmp`
+   (a pasta `www` do HA é servida em `/local/`).
+2. Um botão **CYD: capturar tela**, que chama esse comando.
+3. Uma câmera `local_file` (**CYD tela**) apontando para o mesmo arquivo.
+
+Crie a pasta uma vez no host do HA (`mkdir -p /config/www/cyd`). A câmera
+`local_file` só fica disponível depois que `screen.bmp` existe; o primeiro
+toque no botão cria o arquivo. A URL da imagem no painel do HA é
+`/local/cyd/screen.bmp`.
 
 ### Travamento da tela
 
@@ -266,7 +305,8 @@ curl -s "http://IP_DO_CYD/touch"
 | Toque longo limpa alertas | 0,8 s |
 | Confirmação do OTA (rollback) | 60 s com Wi-Fi |
 | Reinício de `POST /reboot` e do OTA | ~1,5 s depois da resposta |
-| Watchdog da tarefa da tela | 45 s sem uma volta de `display_task` (câmera incluída) |
+| `GET /screenshot` sem a primeira faixa | ~3 s, depois `503` |
+| Watchdog da tarefa da tela | 45 s sem uma volta de `display_task` (câmera e captura incluídas) |
 
 ## Build
 
