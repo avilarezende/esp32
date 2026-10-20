@@ -249,12 +249,25 @@ resposta é `403` com `{"ok":false,"error":"key"}`.
 O servidor HTTP só enfileira o pedido. Quem lê o painel é a `display_task`
 — o mesmo desenho de `POST /config`, em que o HTTP no meio de um quadro SPI
 travava a placa. A tarefa lê uma linha por vez: se houver um sprite ou
-framebuffer, copia dali; senão, lê a GRAM do ILI9341 (MISO no GPIO 12). Cada
-faixa de 4 linhas (2,5 KB de RGB565) volta por uma fila. O handler converte
-para BMP e envia. Se a primeira faixa não chega em cerca de **3 s**, a
-resposta é `503` com `{"ok":false,"error":"timeout"}` (ou `"busy"` se já
-existe uma captura). Enquanto a leitura corre, o batimento do watchdog de
-45 s continua sendo renovado.
+framebuffer, copia dali; senão, lê a GRAM do ILI9341 (MISO no GPIO 12).
+
+O barramento do LCD fica sem DMA (`SPI_DMA_DISABLED`). DMA no SPI2 briga
+com o Wi-Fi e reinicia o CYD, e sem DMA cada transferência cabe em **64
+bytes**. A leitura da GRAM começa com `RAMRD` (`0x2E`) e segue com
+`RAMRD continue` (`0x3E`). Os dois comandos devolvem um byte dummy e depois
+RGB666 (3 bytes por pixel, 6 bits no topo), então cada pedaço tem 21 pixels
+(`1 + 21×3 = 64`; os 5 pixels finais da linha de 320 vão num último
+pedaço). O clock do painel é **10 MHz** para escrita e leitura: o
+dispositivo SPI tem um clock só, e o readback do ILI9341 não é confiável
+acima disso.
+
+Cada faixa de 4 linhas (2,5 KB de RGB565) volta por uma fila. O handler
+converte para BMP e envia. Se a primeira faixa não chega em cerca de
+**3 s**, a resposta é `503` com `{"ok":false,"error":"timeout"}` (ou
+`"busy"` se já existe uma captura). Se a leitura do painel falha, a
+resposta é `500` com `{"ok":false,"error":"read_failed"}` e o log da
+`display_task` traz o `esp_err`. Enquanto a leitura corre, o batimento do
+watchdog de 45 s continua sendo renovado.
 
 ```bash
 curl -fsS -o tela.bmp "http://IP_DO_CYD/screenshot?key=SUA_CHAVE_16"
@@ -306,6 +319,7 @@ curl -s "http://IP_DO_CYD/touch"
 | Confirmação do OTA (rollback) | 60 s com Wi-Fi |
 | Reinício de `POST /reboot` e do OTA | ~1,5 s depois da resposta |
 | `GET /screenshot` sem a primeira faixa | ~3 s, depois `503` |
+| `GET /screenshot` com falha de leitura | resposta imediata `500` `read_failed` |
 | Watchdog da tarefa da tela | 45 s sem uma volta de `display_task` (câmera e captura incluídas) |
 
 ## Build

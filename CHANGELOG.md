@@ -68,4 +68,10 @@ e da observação do Home Assistant. Testado na placa pelo autor da série.
   responde `503`. O watchdog de 45 s segue alimentado durante a captura.
   No HA: `shell_command` com `curl` para `/config/www/cyd/screen.bmp`,
   botão **CYD: capturar tela** e câmera `local_file`.
+- A leitura da GRAM do screenshot cabe no FIFO de 64 bytes (o LCD continua
+  sem DMA: DMA no SPI2 reinicia o CYD com o Wi-Fi). Cada linha sai em
+  pedaços de 21 pixels com `RAMRD` (`0x2E`) e `RAMRD continue` (`0x3E`):
+  um byte dummy e RGB666 em 3 bytes/px. O clock do painel desce para
+  10 MHz, o teto usual da leitura do ILI9341. Falha de leitura vira `500`
+  `read_failed` (com o `esp_err` no log), em vez de `503` `timeout`.
 - `cyd_cfg_load()` monta uma cópia e troca `s_cfg` com um único `memcpy`.
