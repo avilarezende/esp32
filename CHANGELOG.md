@@ -19,6 +19,16 @@ e da observação do Home Assistant. Testado na placa pelo autor da série.
 
 ### Painel
 
+- Tema escuro único no portal, na observação, no protetor e nos alertas:
+  barra de status de 24 px, cartões arredondados, temperatura em âmbar,
+  umidade em azul, ligado em verde. O gato calico, os textos em pt-BR e os
+  alvos de toque (faixa de cima, faixa de baixo, **LIMPAR TUDO**, **Porta**)
+  continuam os mesmos.
+- O ícone de internet (barras, com corte vermelho sem rede ou sem a URL de
+  teste) fica na barra de todas as páginas, não só no protetor.
+- Cada quadro ainda é pintado em faixas de 20 px. Uma faixa igual à anterior
+  não é reenviada ao LCD, então a animação do gato não redesenha a tela
+  inteira. O clock do painel segue em 10 MHz.
 - Campainha e botão rápido abrem um visor de snapshot JPEG
   (`GET /api/camera_proxy` no HA, decodificado com o TJpgDec da ROM).
   O botão padrão se chama **Porta** e aponta para a câmera da frente direita.

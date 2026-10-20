@@ -17,6 +17,26 @@ e não acende com esta imagem.
 
 ## Telas do painel
 
+### Aparência
+
+O painel usa um tema escuro só, nas quatro páginas (portal, observação,
+protetor e alertas):
+
+- Fundo azul-noite, barra de status de 24 px e cartões arredondados na mesma
+  margem de 8 px.
+- A barra traz, da esquerda para a direita, o título ou o relógio, o selo de
+  alertas, o estado do HA (na observação) e o ícone de internet.
+- Temperatura em âmbar e umidade em azul. Ligado é verde, desligado é o texto
+  apagado, qualquer outro estado é azul.
+- O gato calico continua na observação e no protetor, com os mesmos
+  comportamentos. Não entra no portal nem na lista de alertas.
+- O toque não mudou de lugar: a faixa de cima (à esquerda do botão **Porta**)
+  e a faixa de baixo abrem os alertas; **LIMPAR TUDO** segue em `y >= 180`;
+  o botão **Porta** segue no canto superior direito.
+- Cada quadro é pintado em faixas de 20 px. Uma faixa igual à do quadro
+  anterior não vai de novo ao painel, então o gato não redesenha a tela
+  inteira. O clock do LCD continua em 10 MHz.
+
 ### Splash
 
 Na subida o painel mostra um gato calico ditherizado (vários quadros) e em
@@ -24,7 +44,9 @@ seguida a tela de observação ou o portal.
 
 ### Portal (sem Wi-Fi de casa)
 
-Enquanto a placa não tem IP de estação, o painel mostra como conectar o celular:
+Enquanto a placa não tem IP de estação, o painel mostra um cartão com o jeito
+de conectar o celular. A barra de status diz **Portal** e o ícone de internet
+fica com o corte de “sem rede”:
 
 ![Portal no painel](images/cyd-panel-portal.png)
 
@@ -39,9 +61,11 @@ ao HA (não baixa mais o `/api/states` inteiro) e monta a tela:
 
 ![Tela de observação](images/cyd-home-ha.png)
 
-- Hora (Montserrat, 24 h por padrão) e status.
-- Lugar (Casa), temperatura e umidade quando o HA tem `weather` ou sensores
-  de temperatura e umidade.
+- Hora (Montserrat pequeno, 24 h por padrão) na barra, e o status do HA num
+  chip à direita (`HA ok` em verde, `aguardando` apagado, o resto em âmbar).
+- Lugar (Casa) abaixo da barra. Temperatura e umidade ficam em dois cartões
+  quando o HA tem `weather` ou sensores; sem os dois, o cartão diz
+  `clima indisponivel`.
 - Até **cinco** linhas. Cada item da lista pode ser só a entidade
   (`switch.casa_aracaju_piscina`) ou `entidade=Rótulo`
   (`switch.carros_switch_1=Garagem 1`). O rótulo fica com no máximo 17
@@ -53,10 +77,14 @@ ao HA (não baixa mais o `/api/states` inteiro) e monta a tela:
   (Spock, Kirk, Gatas) lidas de
   `sensor.alimentacao_spock_hoje`, `sensor.alimentacao_kirk_hoje` e
   `sensor.alimentacao_gatas_hoje`.
-- Botão **Porta** (canto superior direito): abre a câmera rápida
-  (padrão `camera.frigate_frente_direita`). O rótulo e o ícone (portão ou
-  câmera) mudam em Ajustes.
-- Selo de alertas no topo, quando há alertas ou atualizações do HA.
+- As linhas ficam num cartão, com um ponto de estado e um fio entre elas.
+  Sem linhas, a mensagem de erro (ou “nenhuma luz…”) fica no centro e o gato
+  maior embaixo.
+- Botão **Porta** (canto superior direito, o mesmo retângulo de toque): abre
+  a câmera rápida (padrão `camera.frigate_frente_direita`). O rótulo e o
+  ícone (portão ou câmera) mudam em Ajustes.
+- Selo de alertas na barra de status, quando há alertas. A faixa do alerta
+  mais recente continua embaixo.
 
 Estados que aparecem no lugar de um spinner infinito:
 
@@ -97,15 +125,15 @@ ou o decodificador não voltam em **45 s**, o watchdog reinicia a placa
 ### Protetor de tela
 
 Após o tempo de descanso (padrão **30 s**) sem toque, o relógio grande toma a
-tela, com data, temperatura, umidade, o gato e o **ícone de internet** no
-canto:
+tela. A data fica na barra, junto com o ícone de internet; lugar, temperatura
+e umidade ficam num cartão; o gato calico fica no centro:
 
 ![Protetor](images/cyd-saver-ha.png)
 
 O ícone consulta a URL salva (padrão
-`http://connectivitycheck.gstatic.com/generate_204`). Arcos verdes: HTTP 200 ou
-204. Arcos com um X vermelho: sem Wi-Fi ou Wi-Fi sem essa resposta. Cinza:
-ainda não houve teste.
+`http://connectivitycheck.gstatic.com/generate_204`). Barras verdes: HTTP 200 ou
+204. Barras com um corte vermelho: sem Wi-Fi ou Wi-Fi sem essa resposta. Cinza:
+ainda não houve teste. Na observação e nos alertas o mesmo ícone fica na barra.
 
 Um toque volta à observação. Após **40 minutos** sem uso a backlight apaga; um
 toque acorda o painel. O gato troca de comportamento sozinho (parado, dorme,
@@ -114,7 +142,9 @@ alonga, pata, olha em volta). Dá para desligar a animação em Ajustes.
 ### Alertas
 
 O HA empurra alertas com `POST /alert`. O painel guarda até 8, mostra um selo
-(`! N`) na observação e no descanso e uma faixa com o mais recente.
+(`! N`) na barra da observação e do descanso e uma faixa arredondada com o
+mais recente. A lista usa um cartão por alerta, com uma faixa colorida à
+esquerda, e o botão **LIMPAR TUDO** ocupa a faixa de baixo.
 
 - Toque no selo, na faixa de cima (à esquerda do botão Porta) ou na faixa de
   baixo abre a lista.

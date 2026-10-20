@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# Build and run host unit tests natively with gcc (wifi_form and the
-# screenshot BMP). Reuses the Unity framework bundled with ESP-IDF.
+# Build and run host unit tests natively with gcc (wifi_form, the screenshot
+# BMP and the CYD scene painter). Also renders page previews to
+# host_test/build/preview. Reuses the Unity framework bundled with ESP-IDF.
 # No hardware or emulator required.
 set -euo pipefail
 
@@ -34,3 +35,23 @@ gcc -std=c11 -Wall -Wextra \
     -o "$HERE/build/cyd_bmp_test"
 
 "$HERE/build/cyd_bmp_test"
+
+gcc -std=c11 -Wall -Wextra \
+    -I "$UNITY" \
+    -I "$HERE/../main" \
+    "$HERE/test_cyd_scene.c" \
+    "$HERE/../main/cyd_scene.c" \
+    "$UNITY/unity.c" \
+    -o "$HERE/build/cyd_scene_test"
+
+"$HERE/build/cyd_scene_test"
+
+gcc -std=c11 -Wall -Wextra \
+    -I "$HERE/../main" \
+    "$HERE/render_ui.c" \
+    "$HERE/../main/cyd_scene.c" \
+    "$HERE/../main/cyd_bmp.c" \
+    -o "$HERE/build/render_ui"
+
+mkdir -p "$HERE/build/preview"
+"$HERE/build/render_ui" "$HERE/build/preview"

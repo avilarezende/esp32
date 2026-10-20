@@ -38,6 +38,10 @@ flash.bat COM3
   `switch.carros_switch_1=Garagem 1`, `switch.carros_switch_2=Garagem 2`,
   `switch.casa_aracaju_piscina=Piscina`, `switch.casa_ewelink_poco=Poco`.
 - Relógio Montserrat com antialiasing, gato calico animado, splash ditherizado.
+- Tema escuro único: barra de status (hora ou título, selo, estado do HA,
+  ícone de internet), cartões arredondados para clima, dispositivos e alertas,
+  botão **Porta** no mesmo canto. Faixas que não mudaram não são reenviadas
+  ao painel, para o gato não piscar a tela inteira.
 - Inversão de cor **desligada** por padrão; ordem BGR opcional (vale depois de reiniciar).
 - Ajustes da tela na NVS e na seção **Tela do CYD** (`GET`/`POST /config`).
   Inversão e brilho gravados por `POST /config` ou `POST /display` entram na
@@ -201,7 +205,9 @@ emulador para ver `found stored credentials for SSID '...'`.
 ## Testes
 
 A lógica do formulário (URL, campos, SSID e senha) está no componente
-`wifi_form` e tem testes de host com `gcc` + Unity:
+`wifi_form` e tem testes de host com `gcc` + Unity. O mesmo script pinta as
+páginas do CYD (`host_test/render_ui`) e confere barra, cartões, botão e o
+gato sem o painel:
 
 ```bash
 ./host_test/run.sh

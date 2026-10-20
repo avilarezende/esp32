@@ -295,10 +295,41 @@ static void flush_band(const uint16_t *src, int y, int rows)
     esp_lcd_panel_draw_bitmap(s_panel, 0, y, CYD_W, y + rows, s_wire);
 }
 
+/* Skip SPI for bands identical to the previous frame. A full 320x240 push at
+ * 10 MHz is slow enough to tear; the cat only dirties the bands it sits in.
+ * Hashes are 48 bytes. Anything that draws the panel outside present() must
+ * call present_invalidate(), or a matching hash would leave the old pixels. */
+#define CYD_BANDS (CYD_H / BAND_H)
+_Static_assert(CYD_H % BAND_H == 0, "panel height must be a whole number of bands");
+static uint32_t s_band_hash[CYD_BANDS];
+static uint8_t s_band_valid[CYD_BANDS];
+
+static uint32_t hash_band(const uint16_t *p, int n)
+{
+    uint32_t h = 2166136261u;
+    for (int i = 0; i < n; i++) {
+        h ^= p[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static void present_invalidate(void)
+{
+    memset(s_band_valid, 0, sizeof s_band_valid);
+}
+
 static void present(const cyd_scene_t *scene)
 {
-    for (int y = 0; y < CYD_H; y += BAND_H) {
+    for (int y = 0, i = 0; y < CYD_H; y += BAND_H, i++) {
+        uint32_t h;
         cyd_scene_paint(s_band, y, BAND_H, scene);
+        h = hash_band(s_band, CYD_W * BAND_H);
+        if (s_band_valid[i] && s_band_hash[i] == h) {
+            continue;
+        }
+        s_band_hash[i] = h;
+        s_band_valid[i] = 1;
         flush_band(s_band, y, BAND_H);
     }
 }
@@ -542,6 +573,7 @@ static void run_camera(const char *entity, int secs)
             shot_service();
             if (touch_down()) {
                 wait_release(1500);
+                present_invalidate();
                 return;
             }
             vTaskDelay(pdMS_TO_TICKS(40));
@@ -553,6 +585,7 @@ static void run_camera(const char *entity, int secs)
         }
         portEXIT_CRITICAL(&s_cam_mux);
     }
+    present_invalidate();
 }
 
 void cyd_display_show_camera(const char *entity, int seconds)
