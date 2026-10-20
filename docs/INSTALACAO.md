@@ -108,9 +108,9 @@ ESP-IDF **v5.3.2**. No Windows, abra sempre o atalho **ESP-IDF PowerShell**.
 git clone https://github.com/avilarezende/esp32.git
 cd esp32
 git checkout cursor/cyd-touch-ui-b931
-idf.py -B build_cyd -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" fullclean
-idf.py -B build_cyd -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
-idf.py -B build_cyd -p COM3 flash monitor
+idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" fullclean
+idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
+idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -p COM3 flash monitor
 ```
 
 O `fullclean` evita um `sdkconfig` antigo sem `CONFIG_APP_ENABLE_CYD`.

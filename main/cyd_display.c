@@ -33,6 +33,7 @@
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "ha_client.h"
+#include "cyd_net.h"
 #include "wifi_manager.h"
 #include "cyd_bmp.h"
 #include "soc/soc_caps.h"
@@ -1061,10 +1062,7 @@ static void display_task(void *arg)
             ha_snapshot_t hs;
             ha_client_copy(&hs);
             scene.updates = hs.updates;
-            if (!wifi_manager_is_connected()) scene.net_state = 0;
-            else if (hs.internet == 1) scene.net_state = 2;
-            else if (hs.internet == 0) scene.net_state = 1;
-            else scene.net_state = 3;
+            scene.net_state = cyd_net_ok() ? 2 : 0;
         }
         if (cyd_cfg()->alerts) {
             int n = fill_alerts(&scene, alert_ids);
@@ -1176,6 +1174,9 @@ esp_err_t cyd_display_start(void)
     }
     if (ha_client_start() != ESP_OK) {
         ESP_LOGW(TAG, "Home Assistant poller did not start");
+    }
+    if (cyd_net_start() != ESP_OK) {
+        ESP_LOGW(TAG, "internet probe did not start");
     }
     s_disp_beat = esp_timer_get_time();
     xTaskCreate(disp_wdt_task, "cyd_wdt", 2560, NULL, 5, NULL);

@@ -60,7 +60,7 @@ typedef struct {
     int phase;       /* animation step inside the behaviour */
     int cat_salt;    /* shifts blink/ear timing so cycles are not identical */
     int test_bars;   /* colour test pattern */
-    int net_state;   /* 0 no Wi-Fi, 1 Wi-Fi without internet, 2 internet ok, 3 unknown */
+    int net_state;   /* 2 = internet confirmed; any other value = no internet */
     int cat_on;
     int alert_count; /* badge (alerts + updates) */
     int updates;

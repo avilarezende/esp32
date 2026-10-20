@@ -131,7 +131,13 @@ int main(int argc, char **argv)
     base(&s);
     s.mode = CYD_UI_HOME;
     add_rows(&s);
+    s.net_state = 2;
     save(dir, "home", &s);
+    save(dir, "status-on", &s);
+
+    s.net_state = 0;
+    save(dir, "status-off", &s);
+    s.net_state = 2;
 
     s.alert_count = 2;
     s.alert_rows = 1;

@@ -351,18 +351,6 @@ static int build_summary_body(char *out, size_t n)
     return r;
 }
 
-static int check_internet(const char *url)
-{
-    if (!url || !url[0]) return -1;
-    esp_http_client_config_t cfg = { .url = url, .method = HTTP_METHOD_GET, .timeout_ms = 4000 };
-    esp_http_client_handle_t c = esp_http_client_init(&cfg);
-    if (!c) return -1;
-    esp_err_t err = esp_http_client_perform(c);
-    int st = esp_http_client_get_status_code(c);
-    esp_http_client_cleanup(c);
-    return (err == ESP_OK && (st == 204 || st == 200)) ? 1 : 0;
-}
-
 static void parse_summary(ha_snapshot_t *s, char *body)
 {
     char *save = NULL;
@@ -468,9 +456,7 @@ static void ha_task(void *arg)
         if (wifi_manager_is_connected()) {
             ha_snapshot_t next;
             esp_err_t err = fetch_once(&next);
-            next.internet = check_internet(cyd_cfg()->net_url);
             snap_lock();
-            s_snap.internet = next.internet;
             if (err == ESP_OK || next.configured) {
                 s_snap = next;
             } else if (!s_snap.configured) {
@@ -483,7 +469,6 @@ static void ha_task(void *arg)
             snap_unlock();
         } else {
             snap_lock();
-            s_snap.internet = 0;
             if (!assistant_hub_configured()) {
                 memset(&s_snap, 0, sizeof s_snap);
                 snprintf(s_snap.place, sizeof s_snap.place, "Casa");

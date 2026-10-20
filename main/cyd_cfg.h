@@ -17,7 +17,7 @@ typedef struct {
     uint8_t cat;         /* cat animation */
     uint8_t clk24;       /* 24 h clock */
     uint8_t alerts;      /* show alerts banner/badge */
-    char net_url[128];   /* internet check URL (expects HTTP 200/204) */
+    char net_url[128];   /* stored in NVS; the globe probe does not read it */
     char btn_label[12];  /* quick button label */
     uint8_t btn_icon;    /* 0 gate (portao), 1 camera */
 } cyd_cfg_t;
