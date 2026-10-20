@@ -1,5 +1,6 @@
 #include "http_server.h"
 #include "cyd_display.h"
+#include "cyd_bmp.h"
 #include "ha_client.h"
 #include "cyd_cfg.h"
 #include "esp_ota_ops.h"
@@ -322,6 +323,84 @@ static esp_err_t reboot_post_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* GET /screenshot?key=.. -> chunked 24-bit BMP. The handler only enqueues;
+ * display_task reads the glass one line at a time into a shared band. */
+static esp_err_t screenshot_fail(httpd_req_t *req, const char *error)
+{
+    cyd_display_shot_end();
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_status(req, "503 Service Unavailable");
+    char body[48];
+    snprintf(body, sizeof body, "{\"ok\":false,\"error\":\"%s\"}", error);
+    return httpd_resp_sendstr(req, body);
+}
+
+static esp_err_t screenshot_get_handler(httpd_req_t *req)
+{
+    if (!key_ok(req, NULL)) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "403 Forbidden");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"key\"}");
+    }
+    esp_err_t err = cyd_display_shot_begin();
+    if (err != ESP_OK) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        const char *error = (err == ESP_ERR_INVALID_STATE) ? "busy" : "timeout";
+        char body[48];
+        snprintf(body, sizeof body, "{\"ok\":false,\"error\":\"%s\"}", error);
+        return httpd_resp_sendstr(req, body);
+    }
+
+    const uint16_t *band = NULL;
+    int rows = 0;
+    /* 503 only before the body starts. After that the status is already 200. */
+    if (cyd_display_shot_recv(&band, &rows, CYD_SHOT_TIMEOUT_MS) != 1) {
+        return screenshot_fail(req, "timeout");
+    }
+
+    httpd_resp_set_type(req, "image/bmp");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    uint8_t hdr[CYD_BMP_HEADER];
+    cyd_bmp_header(hdr);
+    if (httpd_resp_send_chunk(req, (const char *)hdr, CYD_BMP_HEADER) != ESP_OK) {
+        cyd_display_shot_end();
+        return ESP_FAIL;
+    }
+
+    /* One BMP row, not a frame. The httpd task is the only writer. */
+    static uint8_t line[CYD_BMP_ROW];
+    int sent = CYD_BMP_HEADER;
+    for (;;) {
+        for (int r = 0; r < rows; r++) {
+            cyd_bmp_row(line, band + (size_t)r * CYD_W, CYD_W);
+            if (httpd_resp_send_chunk(req, (const char *)line, CYD_BMP_ROW) != ESP_OK) {
+                cyd_display_shot_end();
+                return ESP_FAIL;
+            }
+            sent += CYD_BMP_ROW;
+        }
+        cyd_display_shot_ack();
+        if (sent >= CYD_BMP_SIZE) {
+            /* Pixels are out. The trailing 0 from display_task is optional. */
+            cyd_display_shot_recv(&band, &rows, 200);
+            break;
+        }
+        int rc = cyd_display_shot_recv(&band, &rows, CYD_SHOT_TIMEOUT_MS);
+        if (rc == 0) {
+            break;
+        }
+        if (rc != 1) {
+            cyd_display_shot_end();
+            httpd_resp_send_chunk(req, NULL, 0);
+            return ESP_FAIL;
+        }
+    }
+    cyd_display_shot_end();
+    ESP_LOGI(TAG, "screenshot %d bytes", sent);
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
 static esp_err_t ota_post_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json");
@@ -523,6 +602,7 @@ httpd_handle_t http_config_server_start(void)
         { .uri = "/config",       .method = HTTP_POST, .handler = config_post_handler },
         { .uri = "/ota",          .method = HTTP_POST, .handler = ota_post_handler },
         { .uri = "/reboot",       .method = HTTP_POST, .handler = reboot_post_handler },
+        { .uri = "/screenshot",   .method = HTTP_GET,  .handler = screenshot_get_handler },
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
         httpd_register_uri_handler(server, &uris[i]);

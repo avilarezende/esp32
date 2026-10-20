@@ -61,4 +61,11 @@ e da observação do Home Assistant. Testado na placa pelo autor da série.
   volta para o slot anterior.
 - O CI (ESP-IDF 5.3.2) publica `firmware-cyd.bin` e `esp32-ota.bin`.
 - `POST /reboot?key=<chave>` reinicia a placa cerca de 1,5 s depois.
+- `GET /screenshot?key=<chave>` devolve a tela em BMP 24-bit 320×240
+  (230 454 bytes, em pedaços, linhas de baixo para cima). O HTTP só
+  enfileira; `display_task` lê uma linha por vez para um buffer de 2,5 KB.
+  Chave ausente ou errada responde `403`. Sem a primeira faixa em ~3 s,
+  responde `503`. O watchdog de 45 s segue alimentado durante a captura.
+  No HA: `shell_command` com `curl` para `/config/www/cyd/screen.bmp`,
+  botão **CYD: capturar tela** e câmera `local_file`.
 - `cyd_cfg_load()` monta uma cópia e troca `s_cfg` com um único `memcpy`.

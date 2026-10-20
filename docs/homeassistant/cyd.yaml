@@ -8,8 +8,13 @@
 # 2. Em secrets.yaml:
 #      cyd_camera_url: "http://192.168.0.50/camera?key=COLOQUE_A_CHAVE"
 #      cyd_alert_url:  "http://192.168.0.50/alert?key=COLOQUE_A_CHAVE"
+#      cyd_screenshot_cmd: >-
+#        curl -fsS -o /config/www/cyd/screen.bmp
+#        "http://192.168.0.50/screenshot?key=COLOQUE_A_CHAVE"
 # 3. Copie este arquivo para /config/packages/cyd.yaml (packages: !include_dir_named packages).
-# 4. Ajuste as entity_id de câmera e de campainha para a sua casa.
+# 4. mkdir -p /config/www/cyd   (a câmera local_file lê screen.bmp daqui;
+#    /config/www é servido em /local/)
+# 5. Ajuste as entity_id de câmera e de campainha para a sua casa.
 #    Os ids abaixo são o padrão de fábrica do firmware.
 
 rest_command:
@@ -24,6 +29,21 @@ rest_command:
     content_type: "application/x-www-form-urlencoded"
     payload: >-
       id={{ id | default('') }}&title={{ title | urlencode }}&message={{ message | urlencode }}&level={{ level | default('info') }}&duration={{ duration | default(0) }}
+
+shell_command:
+  cyd_screenshot: !secret cyd_screenshot_cmd
+
+template:
+  - button:
+      - name: "CYD: capturar tela"
+        unique_id: cyd_capturar_tela
+        press:
+          - action: shell_command.cyd_screenshot
+
+camera:
+  - platform: local_file
+    name: CYD tela
+    file_path: /config/www/cyd/screen.bmp
 
 automation:
   - id: cyd_campainha

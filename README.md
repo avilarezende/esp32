@@ -14,7 +14,7 @@ O mesmo repositório ainda traz um [firmware de referência PlatformIO](#firmwar
 |-----------|----------|
 | [docs/GUIA.md](docs/GUIA.md) | Telas, chat, câmera, alertas, ajustes e o lado Home Assistant |
 | [docs/INSTALACAO.md](docs/INSTALACAO.md) | Gravação, **último flash por cabo** e OTA |
-| [docs/homeassistant/cyd.yaml](docs/homeassistant/cyd.yaml) | Pacote `rest_command` `cyd_camera` / `cyd_alert` |
+| [docs/homeassistant/cyd.yaml](docs/homeassistant/cyd.yaml) | Pacote `rest_command`, captura de tela e câmera `local_file` |
 | [CHANGELOG.md](CHANGELOG.md) | O que entrou neste firmware |
 | [release/cyd/](release/cyd/) | Binários prontos + `flash.bat` / `flash.sh` |
 
@@ -50,6 +50,8 @@ flash.bat COM3
   o CYD reinicia sozinho.
 - `GET /touch` para depurar o toque, com `uptime_s`, `disp_age_ms`, `reset`,
   `heap` e `heap_min`.
+- `GET /screenshot?key=<chave>` devolve a tela em BMP 24-bit. O HTTP só
+  enfileira; quem lê o painel é `display_task`.
 
 ## Requisitos
 
@@ -97,9 +99,22 @@ Servidor em [`main/http_server.c`](main/http_server.c), porta **80**:
 - `POST /ota` — atualização HTTP (exige a chave)
 - `POST /reboot?key=<chave>` — reinicia a placa cerca de 1,5 s depois da
   resposta `{"ok":true,"reboot":true}` (exige a chave)
+- `GET /screenshot?key=<chave>` — BMP 24-bit de 320×240 (230 454 bytes),
+  resposta em pedaços, linhas de baixo para cima. A mesma checagem de chave
+  de `/reboot`: sem a chave, ou com a chave errada, `403` e
+  `{"ok":false,"error":"key"}`. O handler só enfileira o pedido.
+  `display_task` lê uma linha por vez (do sprite, se houver um; senão do
+  painel) para um buffer compartilhado de 2,5 KB e devolve por fila. Sem
+  quadro inteiro na RAM. Se a primeira faixa não chega em cerca de 3 s, a
+  resposta é `503`. Durante a leitura o batimento do watchdog (45 s) continua.
 
 A chave é os **16 primeiros hex** de `SHA-256` do token longo do HA. O guia
-mostra como calculá-la e como o HA chama `/camera` e `/alert`.
+mostra como calculá-la e como o HA chama `/camera`, `/alert` e `/screenshot`.
+
+No Home Assistant, um `shell_command` grava o BMP em
+`/config/www/cyd/screen.bmp`, o botão **CYD: capturar tela** dispara esse
+comando e uma câmera `local_file` mostra o arquivo. O pacote está em
+[docs/homeassistant/cyd.yaml](docs/homeassistant/cyd.yaml).
 
 ## App web
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 #include "esp_err.h"
 
 /* Start the CYD panel task when CONFIG_APP_ENABLE_CYD is set. */
@@ -33,3 +34,13 @@ void cyd_touch_json(char *buf, size_t n);
 
 /* Block until queued panel color transfers finish. Display task only. */
 void cyd_lcd_drain(void);
+
+/* On-demand screenshot. The HTTP handler only enqueues; display_task is the
+ * only code that reads the panel. Bands come back bottom-row-first as RGB565
+ * in a shared buffer of a few KB. recv: 1 = band, 0 = frame done, -1 = fail.
+ * ack() returns the buffer to display_task. end() after every successful begin(). */
+#define CYD_SHOT_TIMEOUT_MS 3000
+esp_err_t cyd_display_shot_begin(void);
+int cyd_display_shot_recv(const uint16_t **rgb565, int *rows, int timeout_ms);
+void cyd_display_shot_ack(void);
+void cyd_display_shot_end(void);

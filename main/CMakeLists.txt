@@ -9,6 +9,7 @@ idf_component_register(SRCS "main.c"
                             "cyd_splash.c"
                             "cyd_camera.c"
                             "cyd_cfg.c"
+                            "cyd_bmp.c"
                        INCLUDE_DIRS "."
                        EMBED_TXTFILES "app.html"
                        REQUIRES spi_flash
