@@ -24,13 +24,14 @@ e da observação do Home Assistant. Testado na placa pelo autor da série.
   umidade em azul, ligado em verde. O gato calico, os textos em pt-BR e os
   alvos de toque (faixa de cima, faixa de baixo, **LIMPAR TUDO**, **Porta**)
   continuam os mesmos.
-- O globo de internet fica na barra de todas as páginas. Azul: HTTP 204 numa
-  sonda própria (`cyd_net`, a cada 45 s, com DNS de 2 s e GET de 2,5 s, nas
-  URLs `connectivitycheck.gstatic.com/generate_204`,
-  `www.gstatic.com/generate_204` e `cp.cloudflare.com`, sem redirect). Cinza
-  com X vermelho: sem internet. Duas falhas seguidas mostram o X; um sucesso
-  mostra o azul na hora. Sem IP de estação o X entra na hora. O chip do HA
-  continua separado. A URL salva em `net_url` não pinta o globo.
+- O globo de internet gira enquanto a sonda passa (8 quadros de longitude,
+  500 ms cada). Sem internet ele congela em cinza e recebe um X vermelho
+  grosso. A sonda não mudou: HTTP 204 em `cyd_net`, a cada 45 s, com DNS de
+  2 s e GET de 2,5 s, nas URLs `connectivitycheck.gstatic.com/generate_204`,
+  `www.gstatic.com/generate_204` e `cp.cloudflare.com`, sem redirect. Duas
+  falhas seguidas param o globo; um sucesso volta a girar na hora. Sem IP de
+  estação o X entra na hora. O chip do HA continua separado. A URL salva em
+  `net_url` não pinta o globo.
 - Cada quadro ainda é pintado em faixas de 20 px. Uma faixa igual à anterior
   não é reenviada ao LCD, então a animação do gato não redesenha a tela
   inteira. O clock do painel segue em 10 MHz.

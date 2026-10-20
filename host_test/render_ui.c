@@ -89,6 +89,7 @@ static void base(cyd_scene_t *s)
     s->phase = 4;
     s->tail = 2;
     s->net_state = 2;
+    s->net_frame = 4;
     s->cam_btn = 1;
     snprintf(s->place, sizeof s->place, "Casa");
     snprintf(s->status, sizeof s->status, "HA ok");
@@ -132,12 +133,23 @@ int main(int argc, char **argv)
     s.mode = CYD_UI_HOME;
     add_rows(&s);
     s.net_state = 2;
+    s.net_frame = 4;
     save(dir, "home", &s);
     save(dir, "status-on", &s);
+    for (int f = 0; f < 8; f++) {
+        char name[16];
+        s.net_frame = f;
+        snprintf(name, sizeof name, "spin-%d", f);
+        save(dir, name, &s);
+    }
+    s.net_frame = 4;
 
     s.net_state = 0;
+    s.net_frame = 4;
     save(dir, "status-off", &s);
+    save(dir, "home-net-off", &s);
     s.net_state = 2;
+    s.net_frame = 4;
 
     s.alert_count = 2;
     s.alert_rows = 1;

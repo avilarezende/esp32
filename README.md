@@ -49,8 +49,9 @@ flash.bat COM3
   Inversão e brilho gravados por `POST /config` ou `POST /display` entram na
   próxima passagem da tarefa da tela (`display_task`). O servidor HTTP não
   mexe no painel nem na backlight.
-- Globo de internet na barra de todas as páginas (azul com HTTP 204; cinza
-  com X sem internet). O chip do HA continua separado. Detalhe abaixo.
+- Globo de internet na barra de todas as páginas. Com HTTP 204 ele gira
+  (8 quadros, cerca de 4 s por volta). Sem internet ele para, fica cinza e
+  ganha um X vermelho grosso. O chip do HA continua separado. Detalhe abaixo.
 - Alertas do HA (`POST /alert`, `GET /alerts`), selo, lista e **LIMPAR TUDO**.
 - OTA por HTTP com duas partições e rollback (`POST /ota`).
 - Se a tarefa da tela não der uma volta em **45 s** (visor da câmera incluído),
@@ -77,13 +78,16 @@ Manual: [Get Started do ESP-IDF 5.3.2](https://docs.espressif.com/projects/esp-i
 ## Globo de internet
 
 O globo no canto direito da barra de status (observação, protetor, alertas e
-portal) mostra se a placa alcança a internet. Azul: a última sonda teve HTTP
-204. Cinza com um X vermelho: sem internet. Não é o RSSI do Wi-Fi e não é o
-chip do Home Assistant (`HA ok`, `aguardando`, `offline`).
+portal) mostra se a placa alcança a internet. Com internet ele é azul, com
+meridianos brancos, e gira: 8 quadros de longitude, um a cada 500 ms (cerca de
+4 s por volta). Só a faixa da barra é reenviada ao painel. Sem internet o
+quadro congela, o disco fica cinza e um X vermelho de cerca de 3 px cobre o
+globo. Não é o RSSI do Wi-Fi e não é o chip do Home Assistant (`HA ok`,
+`aguardando`, `offline`).
 
 A tarefa `cyd_net` não bloqueia a tela nem o poller do HA:
 
-- Sem IP de estação, o globo fica cinza com X na hora. A tarefa acorda a cada
+- Sem IP de estação, o globo para, cinza, com o X grosso, na hora. A tarefa acorda a cada
   2 s só para ver se o link voltou. Essa queda não entra na contagem de falhas.
 - Com IP, a cada 45 s ela tenta, nesta ordem, e para no primeiro HTTP **204**:
   1. `http://connectivitycheck.gstatic.com/generate_204`
@@ -92,8 +96,9 @@ A tarefa `cyd_net` não bloqueia a tela nem o poller do HA:
 - Em cada URL: DNS (lwIP, timeout 2 s) e, se o nome resolver, GET com timeout
   de 2,5 s, sem seguir redirect. Resposta 200 não conta.
 - Uma rodada em que as três falham conta como uma falha. Duas falhas seguidas
-  mostram o X. Um sucesso mostra o globo azul na hora e zera a contagem.
-- Antes do primeiro sucesso o globo já começa cinza com X.
+  mostram o X grosso e o globo para. Um sucesso retoma o azul girando na hora
+  e zera a contagem.
+- Antes do primeiro sucesso o globo já começa parado, cinza, com X.
 - O campo de URL em Ajustes (`net_url`, NVS `c_net`) continua gravado, mas o
   globo não o usa.
 

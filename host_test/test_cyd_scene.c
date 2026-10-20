@@ -217,33 +217,49 @@ static void test_cat_poses_keep_the_calico(void)
     }
 }
 
-static void test_globe_is_binary(void)
+static void test_globe_spins_and_stops(void)
 {
     cyd_scene_t s;
     uint16_t info = rgb565(96, 148, 232);
+    uint16_t white = rgb565(244, 247, 251);
     uint16_t muted = rgb565(154, 168, 190);
+    uint16_t faint = rgb565(96, 110, 132);
+    static uint16_t frame0[CYD_W * CYD_H];
+    static uint16_t frame2[CYD_W * CYD_H];
 
     base_scene(&s);
     s.mode = CYD_UI_HOME;
     s.net_state = 2;
+    s.net_frame = 0;
     paint(&s);
-    TEST_ASSERT_EQUAL_UINT16(info, px(303, 4));
-    TEST_ASSERT_EQUAL_UINT16(info, px(303, 11));
+    /* Centre longitude is white on frame 0 and ocean on frame 2. */
+    TEST_ASSERT_EQUAL_UINT16(white, px(303, 5));
+    TEST_ASSERT_EQUAL_UINT16(info, px(297, 9));
+    memcpy(frame0, frame, sizeof frame0);
+
+    s.net_frame = 2;
+    paint(&s);
+    TEST_ASSERT_EQUAL_UINT16(info, px(303, 5));
+    TEST_ASSERT_EQUAL_UINT16(info, px(297, 9));
+    memcpy(frame2, frame, sizeof frame2);
+    TEST_ASSERT_TRUE(memcmp(frame0, frame2, sizeof frame0) != 0);
 
     s.net_state = 0;
+    s.net_frame = 0;
     paint(&s);
-    TEST_ASSERT_EQUAL_UINT16(muted, px(303, 4));
+    TEST_ASSERT_EQUAL_UINT16(faint, px(303, 5));
+    TEST_ASSERT_EQUAL_UINT16(muted, px(297, 9));
+    TEST_ASSERT_EQUAL_UINT16(crit, px(302, 11));
     TEST_ASSERT_EQUAL_UINT16(crit, px(303, 11));
+    TEST_ASSERT_EQUAL_UINT16(crit, px(304, 11));
 
-    s.net_state = 1;
+    s.net_frame = 2;
     paint(&s);
-    TEST_ASSERT_EQUAL_UINT16(muted, px(303, 4));
+    TEST_ASSERT_EQUAL_UINT16(muted, px(303, 5));
+    TEST_ASSERT_EQUAL_UINT16(crit, px(302, 11));
     TEST_ASSERT_EQUAL_UINT16(crit, px(303, 11));
-
-    s.net_state = 3;
-    paint(&s);
-    TEST_ASSERT_EQUAL_UINT16(muted, px(303, 4));
-    TEST_ASSERT_EQUAL_UINT16(crit, px(303, 11));
+    TEST_ASSERT_EQUAL_UINT16(crit, px(304, 11));
+    TEST_ASSERT_EQUAL_UINT16(muted, px(297, 9));
 }
 
 static void test_empty_home_keeps_the_cat(void)
@@ -267,6 +283,6 @@ int main(void)
     RUN_TEST(test_sleep_and_bars_and_stable);
     RUN_TEST(test_cat_poses_keep_the_calico);
     RUN_TEST(test_empty_home_keeps_the_cat);
-    RUN_TEST(test_globe_is_binary);
+    RUN_TEST(test_globe_spins_and_stops);
     return UNITY_END();
 }
