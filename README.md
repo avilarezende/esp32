@@ -105,8 +105,13 @@ Servidor em [`main/http_server.c`](main/http_server.c), porta **80**:
   `{"ok":false,"error":"key"}`. O handler só enfileira o pedido.
   `display_task` lê uma linha por vez (do sprite, se houver um; senão do
   painel) para um buffer compartilhado de 2,5 KB e devolve por fila. Sem
-  quadro inteiro na RAM. Se a primeira faixa não chega em cerca de 3 s, a
-  resposta é `503`. Durante a leitura o batimento do watchdog (45 s) continua.
+  quadro inteiro na RAM. O LCD segue sem DMA (o DMA no SPI2 reinicia o CYD
+  junto com o Wi-Fi), então a GRAM sai em pedaços de 21 pixels: `RAMRD`
+  (`0x2E`) e depois `0x3E`, um byte dummy e RGB666 (3 bytes/px), no limite
+  de 64 bytes do FIFO. O clock do painel é 10 MHz. Se a primeira faixa não
+  chega em cerca de 3 s, a resposta é `503` (`timeout` ou `busy`). Falha de
+  leitura é `500` com `{"ok":false,"error":"read_failed"}`. Durante a
+  leitura o batimento do watchdog (45 s) continua.
 
 A chave é os **16 primeiros hex** de `SHA-256` do token longo do HA. O guia
 mostra como calculá-la e como o HA chama `/camera`, `/alert` e `/screenshot`.

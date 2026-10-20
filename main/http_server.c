@@ -325,11 +325,11 @@ static esp_err_t reboot_post_handler(httpd_req_t *req)
 
 /* GET /screenshot?key=.. -> chunked 24-bit BMP. The handler only enqueues;
  * display_task reads the glass one line at a time into a shared band. */
-static esp_err_t screenshot_fail(httpd_req_t *req, const char *error)
+static esp_err_t screenshot_fail(httpd_req_t *req, const char *status, const char *error)
 {
     cyd_display_shot_end();
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_status(req, "503 Service Unavailable");
+    httpd_resp_set_status(req, status);
     char body[48];
     snprintf(body, sizeof body, "{\"ok\":false,\"error\":\"%s\"}", error);
     return httpd_resp_sendstr(req, body);
@@ -354,9 +354,13 @@ static esp_err_t screenshot_get_handler(httpd_req_t *req)
 
     const uint16_t *band = NULL;
     int rows = 0;
-    /* 503 only before the body starts. After that the status is already 200. */
-    if (cyd_display_shot_recv(&band, &rows, CYD_SHOT_TIMEOUT_MS) != 1) {
-        return screenshot_fail(req, "timeout");
+    /* 500/503 only before the body starts. After that the status is already 200. */
+    int rc = cyd_display_shot_recv(&band, &rows, CYD_SHOT_TIMEOUT_MS);
+    if (rc == -2) {
+        return screenshot_fail(req, "500 Internal Server Error", "read_failed");
+    }
+    if (rc != 1) {
+        return screenshot_fail(req, "503 Service Unavailable", "timeout");
     }
 
     httpd_resp_set_type(req, "image/bmp");
@@ -386,7 +390,7 @@ static esp_err_t screenshot_get_handler(httpd_req_t *req)
             cyd_display_shot_recv(&band, &rows, 200);
             break;
         }
-        int rc = cyd_display_shot_recv(&band, &rows, CYD_SHOT_TIMEOUT_MS);
+        rc = cyd_display_shot_recv(&band, &rows, CYD_SHOT_TIMEOUT_MS);
         if (rc == 0) {
             break;
         }

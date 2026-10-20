@@ -77,11 +77,36 @@ static void test_black_and_mid_grey(void)
     TEST_ASSERT_EQUAL_UINT8(132, row[5]);
 }
 
+static void test_read_chunk_fits_spi_fifo(void)
+{
+    /* 64-byte FIFO, 1 dummy byte, RGB666: 21 px, and 320 px is 16 bursts. */
+    TEST_ASSERT_EQUAL_INT(21, cyd_lcd_read_px(CYD_LCD_READ_FIFO));
+    TEST_ASSERT_TRUE(1 + 21 * 3 <= CYD_LCD_READ_FIFO);
+
+    int chunks = 0;
+    int rest = 0;
+    for (int x = 0; x < CYD_W; ) {
+        int n = CYD_W - x;
+        int px = cyd_lcd_read_px(CYD_LCD_READ_FIFO);
+        if (n > px) {
+            n = px;
+        }
+        TEST_ASSERT_TRUE(1 + n * 3 <= CYD_LCD_READ_FIFO);
+        x += n;
+        rest = n;
+        chunks++;
+    }
+    TEST_ASSERT_EQUAL_INT(16, chunks);
+    TEST_ASSERT_EQUAL_INT(5, rest);
+    TEST_ASSERT_TRUE(1 + 5 * 3 <= CYD_LCD_READ_FIFO);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_header_is_320x240_24bit);
     RUN_TEST(test_row_expands_rgb565_to_bgr24);
     RUN_TEST(test_black_and_mid_grey);
+    RUN_TEST(test_read_chunk_fits_spi_fifo);
     return UNITY_END();
 }

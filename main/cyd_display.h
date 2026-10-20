@@ -37,7 +37,8 @@ void cyd_lcd_drain(void);
 
 /* On-demand screenshot. The HTTP handler only enqueues; display_task is the
  * only code that reads the panel. Bands come back bottom-row-first as RGB565
- * in a shared buffer of a few KB. recv: 1 = band, 0 = frame done, -1 = fail.
+ * in a shared buffer of a few KB. recv: 1 = band, 0 = frame done,
+ * -1 = timeout (or cancelled), -2 = the panel read failed.
  * ack() returns the buffer to display_task. end() after every successful begin(). */
 #define CYD_SHOT_TIMEOUT_MS 3000
 esp_err_t cyd_display_shot_begin(void);
