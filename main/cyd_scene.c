@@ -234,56 +234,6 @@ static void line(canvas_t *c, int x0, int y0, int x1, int y1, uint16_t color)
     }
 }
 
-static void fill_tri(canvas_t *c, int x0, int y0, int x1, int y1, int x2, int y2, uint16_t color)
-{
-    int ys[3] = {y0, y1, y2};
-    int xs[3] = {x0, x1, x2};
-    for (int y = c->y0; y < c->y0 + c->bh && y < CYD_H; y++) {
-        int hits[3];
-        int n = 0;
-        for (int e = 0; e < 3; e++) {
-            int ya = ys[e];
-            int yb = ys[(e + 1) % 3];
-            int xa = xs[e];
-            int xb = xs[(e + 1) % 3];
-            int ymin = ya < yb ? ya : yb;
-            int ymax = ya > yb ? ya : yb;
-            if (y < ymin || y >= ymax || ya == yb) {
-                continue;
-            }
-            hits[n++] = xa + (xb - xa) * (y - ya) / (yb - ya);
-        }
-        if (n < 2) {
-            continue;
-        }
-        int left = hits[0];
-        int right = hits[1];
-        if (n == 3) {
-            if (hits[2] < left) {
-                left = hits[2];
-            }
-            if (hits[2] > right) {
-                right = hits[2];
-            }
-        }
-        if (left > right) {
-            int tmp = left;
-            left = right;
-            right = tmp;
-        }
-        if (left < 0) {
-            left = 0;
-        }
-        if (right >= CYD_W) {
-            right = CYD_W - 1;
-        }
-        uint16_t *row = c->band + (y - c->y0) * CYD_W;
-        for (int x = left; x <= right; x++) {
-            row[x] = color;
-        }
-    }
-}
-
 static void glyph(canvas_t *c, int x, int y, int scale, char ch, uint16_t color)
 {
     unsigned uc = (unsigned char)ch;
@@ -353,7 +303,16 @@ static void dline(canvas_t *c, int ox, int oy, int h, int x0, int y0, int x1, in
 }
 
 static void cubic(int x0, int y0, int x1, int y1, int x2, int y2, int x3, int y3,
-                  int i, int steps, int *xo, int *yo);
+                  int i, int steps, int *xo, int *yo)
+{
+    int t = (i * 32) / steps;
+    int u = 32 - t;
+    int u2 = u * u;
+    int t2 = t * t;
+    int den = 32 * 32 * 32;
+    *xo = (u2 * u * x0 + 3 * u2 * t * x1 + 3 * u * t2 * x2 + t2 * t * x3) / den;
+    *yo = (u2 * u * y0 + 3 * u2 * t * y1 + 3 * u * t2 * y2 + t2 * t * y3) / den;
+}
 
 static void dcurve(canvas_t *c, int ox, int oy, int h,
                    int x0, int y0, int x1, int y1, int x2, int y2, int x3, int y3,
@@ -483,66 +442,6 @@ __attribute__((unused)) static void clock_row(canvas_t *c, int y, int h, const c
     clock_at(c, x, y, h, hhmm, color);
 }
 
-/* Map a point from the web kitten's 160x140 viewBox. */
-static int sc(int v, int n, int d)
-{
-    return v * n / d;
-}
-
-static void cubic(int x0, int y0, int x1, int y1, int x2, int y2, int x3, int y3,
-                  int i, int steps, int *xo, int *yo)
-{
-    int t = (i * 32) / steps;
-    int u = 32 - t;
-    int u2 = u * u;
-    int t2 = t * t;
-    int den = 32 * 32 * 32;
-    *xo = (u2 * u * x0 + 3 * u2 * t * x1 + 3 * u * t2 * x2 + t2 * t * x3) / den;
-    *yo = (u2 * u * y0 + 3 * u2 * t * y1 + 3 * u * t2 * y2 + t2 * t * y3) / den;
-}
-
-static void stroke_cubic(canvas_t *c, int ox, int oy, int n, int d,
-                         int x0, int y0, int x1, int y1, int x2, int y2, int x3, int y3,
-                         int radius, uint16_t color)
-{
-    int steps = 10;
-    int r = sc(radius, n, d);
-    if (r < 1) {
-        r = 1;
-    }
-    for (int i = 0; i <= steps; i++) {
-        int x;
-        int y;
-        cubic(x0, y0, x1, y1, x2, y2, x3, y3, i, steps, &x, &y);
-        fill_disc(c, ox + sc(x, n, d), oy + sc(y, n, d), r, color);
-    }
-}
-
-static void ell(canvas_t *c, int ox, int oy, int n, int d,
-                int cx, int cy, int rx, int ry, uint16_t color)
-{
-    int erx = sc(rx, n, d);
-    int ery = sc(ry, n, d);
-    if (erx < 1) {
-        erx = 1;
-    }
-    if (ery < 1) {
-        ery = 1;
-    }
-    fill_ellipse(c, ox + sc(cx, n, d), oy + sc(cy, n, d), erx, ery, color);
-}
-
-static void tri(canvas_t *c, int ox, int oy, int n, int d,
-                int x0, int y0, int x1, int y1, int x2, int y2, uint16_t color)
-{
-    fill_tri(c,
-             ox + sc(x0, n, d), oy + sc(y0, n, d),
-             ox + sc(x1, n, d), oy + sc(y1, n, d),
-             ox + sc(x2, n, d), oy + sc(y2, n, d),
-             color);
-}
-
-
 /* ---- Anti-aliased clock (Montserrat SemiBold, 4-bit alpha) ---- */
 #include "clock_font.inc"
 
@@ -598,110 +497,233 @@ static void aa_center(canvas_t *c, int y, int big, const char *s, uint16_t color
     aa_text(c, (CYD_W - w) / 2, y, big, s, color, 1);
 }
 
-static int s_pdx; /* pupil shift for "look around" */
-static void kitten(canvas_t *c, int ox, int oy, int n, int d, int blink, int tail)
+#include "cyd_cat.inc"
+
+/* One source row of a palette sprite. Index 0 is transparent. */
+static void cat_decode(const cat_part_t *p, int sy, uint8_t *dst)
 {
-    /* Same shapes as the web SVG (viewBox 160x140): cream body, black cap
-     * and left ear, orange right ear and cheek, pink inner ears. */
-    int sway = (tail % 5) - 2;
-    stroke_cubic(c, ox, oy, n, d, 48, 108, 18, 104, 12, 72, 30 + sway * 4, 56, 8, c->cream);
-    stroke_cubic(c, ox, oy, n, d, 44, 104, 22, 98, 18, 76, 32 + sway * 3, 64, 4, c->orange);
-    stroke_cubic(c, ox, oy, n, d, 33, 66, 28, 56, 32, 48, 40 + sway * 2, 46, 4, c->black);
-    ell(c, ox, oy, n, d, 92, 108, 38, 24, c->cream);
-    ell(c, ox, oy, n, d, 72, 104, 16, 13, c->orange);
-    ell(c, ox, oy, n, d, 114, 98, 14, 12, c->black);
-    ell(c, ox, oy, n, d, 76, 126, 11, 7, c->cream);
-    ell(c, ox, oy, n, d, 106, 126, 11, 7, c->cream);
-    tri(c, ox, oy, n, d, 62, 58, 46, 16, 84, 46, c->black);
-    tri(c, ox, oy, n, d, 64, 52, 54, 28, 76, 46, c->pink);
-    tri(c, ox, oy, n, d, 122, 58, 140, 16, 102, 46, c->orange);
-    tri(c, ox, oy, n, d, 120, 52, 130, 28, 108, 46, c->pink);
-    ell(c, ox, oy, n, d, 92, 72, 32, 32, c->cream);
-    ell(c, ox, oy, n, d, 80, 44, 22, 14, c->black);
-    ell(c, ox, oy, n, d, 118, 98, 16, 12, c->orange);
-    if (blink) {
-        int y = oy + sc(76, n, d);
-        int h = sc(3, n, d);
-        if (h < 2) {
-            h = 2;
-        }
-        fill_rect(c, ox + sc(71, n, d), y, sc(14, n, d), h, c->black);
-        fill_rect(c, ox + sc(101, n, d), y, sc(14, n, d), h, c->black);
-    } else {
-        ell(c, ox, oy, n, d, 78 + s_pdx, 76, 7, 8, c->black);
-        ell(c, ox, oy, n, d, 108 + s_pdx, 76, 7, 8, c->black);
-        ell(c, ox, oy, n, d, 80 + s_pdx, 73, 2, 3, c->white);
-        ell(c, ox, oy, n, d, 110 + s_pdx, 73, 2, 3, c->white);
+    int a = CAT_ROW[p->row + sy];
+    int b = CAT_ROW[p->row + sy + 1];
+    int x = 0;
+    int i = a;
+    while (x < p->w) {
+        dst[x++] = 0;
     }
-    ell(c, ox, oy, n, d, 93, 86, 4, 3, c->pink);
-    line(c,
-         ox + sc(85, n, d), oy + sc(92, n, d),
-         ox + sc(93, n, d), oy + sc(97, n, d), c->black);
-    line(c,
-         ox + sc(93, n, d), oy + sc(97, n, d),
-         ox + sc(101, n, d), oy + sc(92, n, d), c->black);
-    line(c, ox + sc(68, n, d), oy + sc(82, n, d), ox + sc(46, n, d), oy + sc(76, n, d), c->black);
-    line(c, ox + sc(68, n, d), oy + sc(88, n, d), ox + sc(46, n, d), oy + sc(90, n, d), c->black);
-    line(c, ox + sc(116, n, d), oy + sc(82, n, d), ox + sc(138, n, d), oy + sc(76, n, d), c->black);
-    line(c, ox + sc(116, n, d), oy + sc(88, n, d), ox + sc(138, n, d), oy + sc(90, n, d), c->black);
+    x = 0;
+    while (i < b && x < p->w) {
+        int op = CAT_RLE[i++];
+        if (op < 128) {
+            x += op;
+        } else {
+            int n = op - 128;
+            while (n-- > 0 && x < p->w && i < b) {
+                dst[x++] = CAT_RLE[i++];
+            }
+        }
+    }
 }
 
-
-static int tri_wave(int p, int period, int amp)
+/* Nearest-neighbour scale. n/d is the size of the 96x88 stage. Only the
+ * rows in this LCD band are decoded, into a stack row (no extra BSS). */
+static void cat_blit(canvas_t *c, int part, int ox, int oy, int n, int d)
 {
-    int q = p % period, h = period / 2;
-    return (q < h ? q : period - q) * amp / h;
-}
-
-/* The always-visible cat: several behaviours chosen at random by the display task. */
-static void kitten_act(canvas_t *c, int ox, int oy, int n, int d, const cyd_scene_t *sc_)
-{
-    /* Skip bands that cannot see the cat (stretch, Zs and the tail included).
-     * The scene is painted once per LCD band, so this drops most of the cost. */
-    int top = oy - sc(48, n, d);
-    int bot = oy + sc(190, n, d);
-    if (bot < c->y0 || top >= c->y0 + c->bh) {
-        s_pdx = 0;
+    const cat_part_t *p = &CAT_PART[part];
+    int dw, dh, dx, dy, y, last;
+    uint8_t row[96];
+    if (n < 1) {
+        n = 1;
+    }
+    if (d < 1) {
+        d = 1;
+    }
+    if (p->w > 96 || p->h < 1 || p->w < 1) {
         return;
     }
-    int p = sc_->phase;
-    s_pdx = 0;
-    switch (sc_->behavior) {
-    case 1: { /* sleeping: eyes shut, slow breathing, rising z's */
-        int breath = tri_wave(p, 16, 3);
-        kitten(c, ox, oy + sc(4 + breath, n, d), n, d, 1, 0);
-        int zy = oy + sc(30, n, d) - (p % 12) * 2;
-        text(c, ox + sc(140, n, d), zy, 1, "z", c->cool);
-        if ((p % 12) > 5) text(c, ox + sc(152, n, d), zy - 10, n >= 1 && d <= 2 ? 2 : 1, "Z", c->cool);
-        break; }
-    case 2: { /* stretching: front paws slide forward, eyes closed at full stretch */
-        int ext = tri_wave(p, 24, 26);
-        kitten(c, ox, oy + sc(ext / 6, n, d), n, d, ext > 18, p);
-        ell(c, ox, oy, n, d, 62 - ext, 132, 18 + ext / 2, 6, c->cream);
-        ell(c, ox, oy, n, d, 44 - ext * 3 / 2, 132, 5, 5, c->pink);
-        ell(c, ox, oy, n, d, 120 + ext / 2, 132, 14 + ext / 3, 6, c->cream);
-        break; }
-    case 3: { /* pawing / tapping the glass */
-        kitten(c, ox, oy, n, d, (p % 16) >= 15, p);
-        int lift = tri_wave(p, 8, 30);
-        ell(c, ox, oy, n, d, 70, 112 - lift, 10, 8, c->cream);
-        ell(c, ox, oy, n, d, 70, 108 - lift, 4, 3, c->pink);
-        if (lift == 0) {
-            int cx = ox + sc(70, n, d), cy = oy + sc(100, n, d), r = sc(16, n, d);
-            line(c, cx - r, cy - r / 2, cx - r / 2, cy - r / 4, c->warm);
-            line(c, cx + r / 2, cy - r / 4, cx + r, cy - r / 2, c->warm);
-            line(c, cx, cy - r, cx, cy - r / 2, c->warm);
-        }
-        break; }
-    case 4: /* looking around */
-        s_pdx = (p / 6) % 3 == 0 ? -4 : ((p / 6) % 3 == 1 ? 0 : 4);
-        kitten(c, ox, oy, n, d, (p % 20) >= 19, p);
-        break;
-    default: /* idle: blink + tail sway */
-        kitten(c, ox, oy, n, d, (p % 16) >= 14, sc_->tail);
-        break;
+    dw = p->w * n / d;
+    dh = p->h * n / d;
+    if (dw < 1 || dh < 1) {
+        return;
     }
-    s_pdx = 0;
+    dx = ox + p->x * n / d;
+    dy = oy + p->y * n / d;
+    if (dy + dh <= c->y0 || dy >= c->y0 + c->bh) {
+        return;
+    }
+    last = -1;
+    for (y = 0; y < dh; y++) {
+        int sy_screen = dy + y;
+        int sy, x;
+        uint16_t *dst;
+        if (sy_screen < c->y0 || sy_screen >= c->y0 + c->bh || sy_screen >= CYD_H) {
+            continue;
+        }
+        sy = y * p->h / dh;
+        if (sy >= p->h) {
+            sy = p->h - 1;
+        }
+        if (sy != last) {
+            cat_decode(p, sy, row);
+            last = sy;
+        }
+        dst = c->band + (sy_screen - c->y0) * CYD_W;
+        for (x = 0; x < dw; x++) {
+            int sx = x * p->w / dw;
+            int px;
+            uint8_t ix;
+            if (sx >= p->w) {
+                sx = p->w - 1;
+            }
+            ix = row[sx];
+            if (!ix || ix >= CAT_PAL_N) {
+                continue;
+            }
+            px = dx + x;
+            if ((unsigned)px >= CYD_W) {
+                continue;
+            }
+            dst[px] = CAT_PAL[ix];
+        }
+    }
+}
+
+/* Breath, tail and blink share one clock. Salt slides the windows so two
+ * visits to the same pose do not blink on the same tick. Phase 0, salt 0
+ * is eyes open, tail neutral-left, ears still: the host tests depend on it. */
+static int cat_tick(const cyd_scene_t *sc)
+{
+    int t = sc->phase + sc->cat_salt * 3;
+    if (t < 0) {
+        t = 0;
+    }
+    return t;
+}
+
+static int cat_breath(int t)
+{
+    int q = t % 12;
+    int up = q < 6 ? q : 12 - q;
+    return up / 3; /* 0..2, slow, held at the top */
+}
+
+static int cat_tail_part(int t)
+{
+    int q = (t / 2) % 10;
+    int up = q < 5 ? q : 10 - q;
+    if (up > 4) {
+        up = 4;
+    }
+    return CAT_TAIL0 + up;
+}
+
+static int cat_ear_part(int t)
+{
+    int e = t % 37;
+    if (e == 33 || e == 34) {
+        return CAT_EARS_LEFT;
+    }
+    if (e == 35 || e == 36) {
+        return CAT_EARS_RIGHT;
+    }
+    return CAT_EARS_SIT;
+}
+
+static int cat_eye_part(int t, int base)
+{
+    int b = t % 28;
+    if (b == 24) {
+        return CAT_EYES_HALF;
+    }
+    if (b == 25) {
+        return CAT_EYES_SHUT;
+    }
+    if (b == 26) {
+        return CAT_EYES_HALF;
+    }
+    return base;
+}
+
+static void cat_sit(canvas_t *c, int ox, int oy, int n, int d, int tail, int ears, int eyes, int mouth)
+{
+    cat_blit(c, tail, ox, oy, n, d);
+    cat_blit(c, ears, ox, oy, n, d);
+    cat_blit(c, CAT_BODY, ox, oy, n, d);
+    cat_blit(c, eyes, ox, oy, n, d);
+    cat_blit(c, mouth, ox, oy, n, d);
+}
+
+/* ox,oy is the top-left of the 96x88 stage. n/d scales that stage. */
+static void kitten_act(canvas_t *c, int ox, int oy, int n, int d, const cyd_scene_t *sc_)
+{
+    int t = cat_tick(sc_);
+    int breath = cat_breath(t);
+    int top, bot, dy, eyes, ears;
+    if (n < 1) {
+        n = 1;
+    }
+    if (d < 1) {
+        d = 1;
+    }
+    top = oy - 2;
+    bot = oy + CAT_H * n / d + 3;
+    if (bot < c->y0 || top >= c->y0 + c->bh) {
+        return;
+    }
+    dy = breath * n / d;
+    switch (sc_->behavior) {
+    case CYD_CAT_SLEEP: {
+        int z = (t / 4) % 3;
+        cat_blit(c, CAT_SLEEP0 + z, ox, oy + dy, n, d);
+        return;
+    }
+    case CYD_CAT_STRETCH: {
+        /* 16-frame ease out and back. Frame 0 is the sitting cat, so the
+         * pose leaves and returns without a pop. */
+        int span = 16;
+        int p = sc_->phase;
+        int up, f;
+        if (p < 0) {
+            p = 0;
+        }
+        if (p > span) {
+            p = span;
+        }
+        up = p < span / 2 ? p : span - p;
+        f = up * 5 / 8;
+        if (f <= 0) {
+            cat_sit(c, ox, oy + dy, n, d, cat_tail_part(t), CAT_EARS_SIT, CAT_EYES_HALF, CAT_MOUTH_SMILE);
+        } else {
+            cat_blit(c, CAT_STRETCH0 + f - 1, ox, oy, n, d);
+        }
+        return;
+    }
+    case CYD_CAT_PURR: {
+        int wob = (t & 2) ? n / d : 0;
+        eyes = cat_eye_part(t, CAT_EYES_HAPPY);
+        cat_sit(c, ox + wob, oy + dy, n, d, cat_tail_part(t), CAT_EARS_SIT, eyes, CAT_MOUTH_PURR);
+        return;
+    }
+    case CYD_CAT_ALERT:
+        eyes = cat_eye_part(t, CAT_EYES_UP);
+        ears = CAT_EARS_ALERT;
+        dy -= n / d;
+        if (dy > 0) {
+            dy = 0;
+        }
+        cat_sit(c, ox, oy + dy, n, d, cat_tail_part(t), ears, eyes, CAT_MOUTH_SMILE);
+        return;
+    default: {
+        int look = (t / 9) % 6;
+        int base = CAT_EYES_C;
+        if (look == 2) {
+            base = CAT_EYES_R;
+        } else if (look == 4) {
+            base = CAT_EYES_L;
+        }
+        eyes = cat_eye_part(t, base);
+        cat_sit(c, ox, oy + dy, n, d, cat_tail_part(t), cat_ear_part(t), eyes, CAT_MOUTH_SMILE);
+        return;
+    }
+    }
 }
 
 static void icon_gate(canvas_t *c, int x, int y, uint16_t col)
@@ -1047,7 +1069,7 @@ static void paint_empty(canvas_t *c, const cyd_scene_t *scene)
         text_center(c, 126, 1, scene->status, c->muted);
     }
     if (scene->cat_on) {
-        kitten_act(c, 116, 146, 1, 2, scene);
+        kitten_act(c, 124, 150, 3, 4, scene);
     }
 }
 
@@ -1117,7 +1139,7 @@ static void paint_home(canvas_t *c, const cyd_scene_t *scene)
         /* The banner covers this corner. Drawing the cat anyway leaves a
          * few pixels sticking out under the rounded alert card. */
         if (scene->cat_on && !scene->banner) {
-            kitten_act(c, 274, 204, 1, 4, scene);
+            kitten_act(c, 272, 204, 5, 12, scene);
         }
     }
 
@@ -1191,8 +1213,8 @@ static void paint_saver(canvas_t *c, const cyd_scene_t *scene)
     aa_center(c, 32, 1, hhmm, c->white);
     paint_glance_card(c, scene);
     if (scene->cat_on) {
-        /* 2/3 of the web viewBox: about 107x93, same patches as the SVG. */
-        kitten_act(c, 106, 132, 2, 3, scene);
+        /* Native 96x88 sprite, centred under the weather card. */
+        kitten_act(c, 112, 132, 1, 1, scene);
     }
     text_center(c, 226, 1, "toque na tela", c->muted);
     alert_banner(c, scene);

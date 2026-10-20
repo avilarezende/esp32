@@ -190,5 +190,54 @@ int main(int argc, char **argv)
     s.net_state = 0;
     save(dir, "portal", &s);
 
+    /* Cat poses on the saver, plus a short strip for the animated preview. */
+    base(&s);
+    s.mode = CYD_UI_SAVER;
+    s.behavior = CYD_CAT_IDLE;
+    s.phase = 4;
+    save(dir, "cat-idle", &s);
+    s.phase = 25;
+    save(dir, "cat-blink", &s);
+    s.behavior = CYD_CAT_STRETCH;
+    s.phase = 8;
+    save(dir, "cat-stretch", &s);
+    s.behavior = CYD_CAT_SLEEP;
+    s.phase = 4;
+    s.hour = 23;
+    save(dir, "cat-sleep", &s);
+    s.behavior = CYD_CAT_ALERT;
+    s.phase = 0;
+    s.hour = 9;
+    save(dir, "cat-alert", &s);
+    s.behavior = CYD_CAT_PURR;
+    s.phase = 2;
+    save(dir, "cat-purr", &s);
+
+    {
+        static const int seq[][2] = {
+            {CYD_CAT_IDLE, 0}, {CYD_CAT_IDLE, 2}, {CYD_CAT_IDLE, 4},
+            {CYD_CAT_IDLE, 6}, {CYD_CAT_IDLE, 8}, {CYD_CAT_IDLE, 10},
+            {CYD_CAT_IDLE, 24}, {CYD_CAT_IDLE, 25}, {CYD_CAT_IDLE, 26},
+            {CYD_CAT_IDLE, 12}, {CYD_CAT_STRETCH, 2}, {CYD_CAT_STRETCH, 4},
+            {CYD_CAT_STRETCH, 6}, {CYD_CAT_STRETCH, 8}, {CYD_CAT_STRETCH, 12},
+            {CYD_CAT_SLEEP, 0}, {CYD_CAT_SLEEP, 4}, {CYD_CAT_SLEEP, 8},
+            {CYD_CAT_ALERT, 0}, {CYD_CAT_ALERT, 6},
+            {CYD_CAT_PURR, 0}, {CYD_CAT_PURR, 2}, {CYD_CAT_PURR, 4},
+        };
+        int i;
+        for (i = 0; i < (int)(sizeof seq / sizeof seq[0]); i++) {
+            char name[32];
+            base(&s);
+            s.mode = CYD_UI_SAVER;
+            s.behavior = seq[i][0];
+            s.phase = seq[i][1];
+            if (s.behavior == CYD_CAT_SLEEP) {
+                s.hour = 23;
+            }
+            snprintf(name, sizeof name, "cat-anim-%02d", i);
+            save(dir, name, &s);
+        }
+    }
+
     return 0;
 }

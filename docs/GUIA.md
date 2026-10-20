@@ -28,8 +28,11 @@ protetor e alertas):
   alertas, o estado do HA (na observação) e o ícone de internet.
 - Temperatura em âmbar e umidade em azul. Ligado é verde, desligado é o texto
   apagado, qualquer outro estado é azul.
-- O gato calico continua na observação e no protetor, com os mesmos
-  comportamentos. Não entra no portal nem na lista de alertas.
+- O gato calico continua na observação e no protetor. O desenho é um
+  sprite em paleta (RLE), com borda antialiasada no fundo escuro: pelo
+  branco, mancha laranja e mancha preta, orelha esquerda preta, orelha
+  direita laranja, bigodes e olhos com brilho. Não entra no portal nem na
+  lista de alertas.
 - O toque não mudou de lugar: a faixa de cima (à esquerda do botão **Porta**)
   e a faixa de baixo abrem os alertas; **LIMPAR TUDO** segue em `y >= 180`;
   o botão **Porta** segue no canto superior direito.
@@ -136,8 +139,11 @@ O ícone consulta a URL salva (padrão
 ainda não houve teste. Na observação e nos alertas o mesmo ícone fica na barra.
 
 Um toque volta à observação. Após **40 minutos** sem uso a backlight apaga; um
-toque acorda o painel. O gato troca de comportamento sozinho (parado, dorme,
-alonga, pata, olha em volta). Dá para desligar a animação em Ajustes.
+toque acorda o painel. O gato respira, pisca devagar, mexe o rabo e, de vez
+em quando, a orelha. De tempos em tempos alonga e boceja, ou olha para cima.
+Entre 21 h e 6 h, no protetor, ele dorme (com z). Um alerta novo do HA faz
+ele erguer as orelhas; um toque faz ele ronronar. O intervalo de cada pose
+é sorteado. Dá para desligar a animação em Ajustes.
 
 ### Alertas
 

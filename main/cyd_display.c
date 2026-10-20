@@ -933,6 +933,7 @@ static void display_task(void *arg)
     int frame = 0;
     int last_mode = -1;
     int behavior = 0, beh_start = 0, beh_len = 24;
+    int cat_force = -1, cat_hold = 0, cat_phase0 = 0, cat_salt = 0, prev_alerts = 0;
     int was_down = 0;
     int alerts_view = 0, long_done = 0, alert_count_last = 0, banner_last = 0;
     int64_t down_since = 0;
@@ -973,6 +974,14 @@ static void display_task(void *arg)
 
         int tx = -1, ty = -1;
         int down = touch_xy(&tx, &ty) || touch_down();
+        int tap = down && !was_down;
+        if (tap) {
+            /* Any touch: the cat purrs for a few frames, including a wake. */
+            cat_force = CYD_CAT_PURR;
+            cat_hold = 10 + (int)(esp_random() % 8);
+            cat_phase0 = frame;
+            cat_salt = (int)(esp_random() & 15);
+        }
         if (down) {
             int on_saver = last_mode == CYD_UI_SAVER;
             int woke = !s_screen_on || (last_mode != CYD_UI_HOME && last_mode != CYD_UI_ALERTS);
@@ -1015,9 +1024,19 @@ static void display_task(void *arg)
 
         if (frame - beh_start >= beh_len) {
             int prev = behavior;
-            do { behavior = (int)(esp_random() % 5); } while (behavior == prev);
+            /* Idle most of the time. Stretch and a look-around are occasional.
+             * Sleep is not in this pool: it belongs to the night screensaver. */
+            static const int pool[5] = {
+                CYD_CAT_IDLE, CYD_CAT_IDLE, CYD_CAT_IDLE, CYD_CAT_STRETCH, CYD_CAT_ALERT
+            };
+            behavior = pool[esp_random() % 5];
+            if (behavior == prev) {
+                behavior = CYD_CAT_IDLE;
+            }
             beh_start = frame;
-            beh_len = behavior == 1 ? 48 + (int)(esp_random() % 32) : 20 + (int)(esp_random() % 16);
+            beh_len = behavior == CYD_CAT_STRETCH ? 16 + (int)(esp_random() % 6)
+                                                 : 22 + (int)(esp_random() % 18);
+            cat_salt = (int)(esp_random() & 15);
         }
 
         int64_t idle_ms = (esp_timer_get_time() - idle_since) / 1000;
@@ -1026,10 +1045,12 @@ static void display_task(void *arg)
         scene.tail = frame / 2;
         scene.behavior = behavior;
         scene.phase = frame - beh_start;
+        scene.cat_salt = cat_salt;
         scene.cam_btn = 1;
         scene.test_bars = esp_timer_get_time() < s_test_until;
         scene.blink = ((frame % 16) >= 14);
         fill_time(&scene);
+        int hour24 = scene.time_valid ? scene.hour : -1;
         if (!cyd_cfg()->clk24 && scene.time_valid) {
             scene.hour = scene.hour % 12;
             if (scene.hour == 0) scene.hour = 12;
@@ -1049,6 +1070,13 @@ static void display_task(void *arg)
             int n = fill_alerts(&scene, alert_ids);
             scene.alert_count = n;   /* updates only listed, never block the badge */
         }
+        if (scene.alert_count > prev_alerts) {
+            cat_force = CYD_CAT_ALERT;
+            cat_hold = 14 + (int)(esp_random() % 10);
+            cat_phase0 = frame;
+            cat_salt = (int)(esp_random() & 15);
+        }
+        prev_alerts = scene.alert_count;
         alert_count_last = scene.alert_count;
         banner_last = scene.banner;
         if (!scene.has_temp && !scene.has_humidity && scene.row_count == 0 &&
@@ -1094,6 +1122,20 @@ static void display_task(void *arg)
         if (alerts_view && wifi_manager_is_connected()) {
             scene.mode = CYD_UI_ALERTS;
             idle_since = esp_timer_get_time();
+        }
+        /* Pose is chosen after the page, so a night saver can sleep and a
+         * touch or a new alert can interrupt it. */
+        if (cat_force >= 0 && cat_hold > 0) {
+            scene.behavior = cat_force;
+            scene.phase = frame - cat_phase0;
+            scene.cat_salt = cat_salt;
+            if (--cat_hold <= 0) {
+                cat_force = -1;
+            }
+        } else if (scene.mode == CYD_UI_SAVER && (hour24 >= 21 || (hour24 >= 0 && hour24 < 6))) {
+            scene.behavior = CYD_CAT_SLEEP;
+            scene.phase = frame;
+            scene.cat_salt = 0;
         }
 
         if (scene.mode == CYD_UI_SLEEP) {
