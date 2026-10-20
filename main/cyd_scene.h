@@ -61,6 +61,7 @@ typedef struct {
     int cat_salt;    /* shifts blink/ear timing so cycles are not identical */
     int test_bars;   /* colour test pattern */
     int net_state;   /* 2 = internet confirmed; any other value = no internet */
+    int net_frame;   /* 0..7 longitude step; frozen while offline */
     int cat_on;
     int alert_count; /* badge (alerts + updates) */
     int updates;

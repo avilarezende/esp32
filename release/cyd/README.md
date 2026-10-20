@@ -70,5 +70,6 @@ A chave são os 16 primeiros hex de `sha256(token longo)`. Detalhes em
 2. Se não: Wi-Fi `ESP32-Setup` / `esp32setup` → `http://192.168.4.1`.
 3. Home Assistant em **porta 80**: endereço `http://192.168.0.10` e o token longo.
 4. Painel em `HA ok`; 30 s → relógio (globo de internet); 40 min → tela off.
-   O globo azul é internet (HTTP 204); o cinza com X é sem internet. O chip
+   O globo azul gira quando há internet (HTTP 204); cinza, parado, com X
+   grosso é sem internet. O chip
    `HA ok` é outra coisa.

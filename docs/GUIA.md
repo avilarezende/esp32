@@ -48,8 +48,8 @@ seguida a tela de observação ou o portal.
 ### Portal (sem Wi-Fi de casa)
 
 Enquanto a placa não tem IP de estação, o painel mostra um cartão com o jeito
-de conectar o celular. A barra de status diz **Portal** e o globo fica cinza
-com um X vermelho, porque ainda não há internet:
+de conectar o celular. A barra de status diz **Portal** e o globo fica
+parado, cinza, com um X vermelho grosso, porque ainda não há internet:
 
 ![Portal no painel](images/cyd-panel-portal.png)
 
@@ -134,9 +134,11 @@ e umidade ficam num cartão; o gato calico fica no centro:
 ![Protetor](images/cyd-saver-ha.png)
 
 O globo no canto direito da barra mostra se há **internet**, nas quatro
-páginas. Azul: a sonda confirmou. Cinza com um X vermelho: sem internet.
-Não é o sinal do Wi-Fi e não é o chip do Home Assistant (`HA ok`,
-`aguardando`, `offline`), que continua à parte.
+páginas. Com internet o disco é azul, os meridianos são brancos e eles
+andam: 8 quadros, um a cada 500 ms. Sem internet o quadro congela, o disco
+fica cinza e um X vermelho grosso (cerca de 3 px) fica por cima. Não é o
+sinal do Wi-Fi e não é o chip do Home Assistant (`HA ok`, `aguardando`,
+`offline`), que continua à parte.
 
 A tarefa `cyd_net` não bloqueia a tela nem o poller do HA:
 
@@ -150,8 +152,9 @@ A tarefa `cyd_net` não bloqueia a tela nem o poller do HA:
 - Em cada URL: DNS pelo lwIP, timeout **2 s**; se o nome resolver, GET com
   timeout de **2,5 s**.
 - Uma rodada em que as três falham conta como uma falha. **Duas falhas
-  seguidas** mostram o X. **Um sucesso** mostra o globo azul na hora e zera
-  a contagem. Antes do primeiro sucesso o globo já começa cinza com X.
+  seguidas** param o globo e mostram o X. **Um sucesso** volta a girar o
+  globo azul na hora e zera a contagem. Antes do primeiro sucesso o globo
+  já começa parado, cinza, com X.
 - O campo de URL em Ajustes (`net_url`, NVS `c_net`) continua gravado, mas
   o globo não o consulta.
 

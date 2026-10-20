@@ -204,36 +204,6 @@ static void plot(canvas_t *c, int x, int y, uint16_t color)
     fill_rect(c, x, y, 1, 1, color);
 }
 
-static void line(canvas_t *c, int x0, int y0, int x1, int y1, uint16_t color)
-{
-    int dx = x1 - x0;
-    int dy = y1 - y0;
-    if (dx < 0) {
-        dx = -dx;
-    }
-    if (dy < 0) {
-        dy = -dy;
-    }
-    int sx = x0 < x1 ? 1 : -1;
-    int sy = y0 < y1 ? 1 : -1;
-    int err = dx - dy;
-    for (;;) {
-        plot(c, x0, y0, color);
-        if (x0 == x1 && y0 == y1) {
-            break;
-        }
-        int e2 = err * 2;
-        if (e2 > -dy) {
-            err -= dy;
-            x0 += sx;
-        }
-        if (e2 < dx) {
-            err += dx;
-            y0 += sy;
-        }
-    }
-}
-
 static void glyph(canvas_t *c, int x, int y, int scale, char ch, uint16_t color)
 {
     unsigned uc = (unsigned char)ch;
@@ -775,17 +745,41 @@ static void test_bars(canvas_t *c)
     }
 }
 
-/* 15x15 globe. Bit 14 of each row is the leftmost pixel. */
-static const uint16_t GLOBE_ROWS[15] = {
-    0x01C0, 0x0630, 0x0808, 0x1084, 0x1144,
-    0x2222, 0x2412, 0x3FFE, 0x2412, 0x2222,
-    0x1144, 0x1084, 0x0808, 0x0630, 0x01C0,
+/* 15x15 disc. Bit 14 of each row is the leftmost pixel. The fill is the
+ * same every step. GLOBE_LINE is eight views of three longitudes, 45 degrees
+ * apart, front hemisphere only, plus the equator. Offline draws GLOBE_X on
+ * top: a 3 px red stroke, so the grey disc still shows in the wedges. */
+static const uint16_t GLOBE_FILL[15] = {
+    0x0000, 0x03E0, 0x07F0, 0x0FF8, 0x1FFC, 0x3FFE, 0x3FFE, 0x3FFE,
+    0x3FFE, 0x3FFE, 0x1FFC, 0x0FF8, 0x07F0, 0x03E0, 0x0000,
+};
+static const uint16_t GLOBE_LINE[8][15] = {
+    { 0x0000, 0x0080, 0x0080, 0x0080, 0x0080, 0x0080, 0x0080, 0x3FFE,
+      0x0080, 0x0080, 0x0080, 0x0080, 0x0080, 0x0080, 0x0000 },
+    { 0x0000, 0x0240, 0x0430, 0x0810, 0x1818, 0x1818, 0x1018, 0x3FFE,
+      0x1018, 0x1818, 0x1818, 0x0810, 0x0430, 0x0240, 0x0000 },
+    { 0x0000, 0x0100, 0x0300, 0x0200, 0x0600, 0x0600, 0x0600, 0x3FFE,
+      0x0600, 0x0600, 0x0600, 0x0200, 0x0300, 0x0100, 0x0000 },
+    { 0x0000, 0x0080, 0x0040, 0x0040, 0x0040, 0x0040, 0x0040, 0x3FFE,
+      0x0040, 0x0040, 0x0040, 0x0040, 0x0040, 0x0080, 0x0000 },
+    { 0x0000, 0x0360, 0x0410, 0x0C18, 0x0808, 0x180C, 0x180C, 0x3FFE,
+      0x180C, 0x180C, 0x0808, 0x0C18, 0x0410, 0x0360, 0x0000 },
+    { 0x0000, 0x0080, 0x0100, 0x0100, 0x0100, 0x0100, 0x0100, 0x3FFE,
+      0x0100, 0x0100, 0x0100, 0x0100, 0x0100, 0x0080, 0x0000 },
+    { 0x0000, 0x0040, 0x0060, 0x0020, 0x0030, 0x0030, 0x0030, 0x3FFE,
+      0x0030, 0x0030, 0x0030, 0x0020, 0x0060, 0x0040, 0x0000 },
+    { 0x0000, 0x0120, 0x0610, 0x0408, 0x0C0C, 0x0C0C, 0x0C04, 0x3FFE,
+      0x0C04, 0x0C0C, 0x0C0C, 0x0408, 0x0610, 0x0120, 0x0000 },
+};
+static const uint16_t GLOBE_X[15] = {
+    0x0000, 0x0000, 0x0000, 0x0C18, 0x0E38, 0x0770, 0x03E0, 0x01C0,
+    0x03E0, 0x0770, 0x0E38, 0x0C18, 0x0000, 0x0000, 0x0000,
 };
 
-static void icon_globe(canvas_t *c, int x, int y, uint16_t col)
+static void blit_mask(canvas_t *c, int x, int y, const uint16_t *rows, uint16_t col)
 {
     for (int row = 0; row < 15; row++) {
-        uint16_t bits = GLOBE_ROWS[row];
+        uint16_t bits = rows[row];
         for (int col_i = 0; col_i < 15; col_i++) {
             if (bits & (1u << (14 - col_i))) {
                 plot(c, x + col_i, y + row, col);
@@ -794,17 +788,19 @@ static void icon_globe(canvas_t *c, int x, int y, uint16_t col)
     }
 }
 
-/* net_state 2: accent globe (internet confirmed). Any other value: grey
- * globe and a red X, including before the first successful probe. */
-static void wifi_icon(canvas_t *c, int x, int y, int state)
+/* state 2: blue disc, white longitudes at `frame` (0..7). Any other state:
+ * the same frame, frozen, in grey, with a thick red X. */
+static void wifi_icon(canvas_t *c, int x, int y, int state, int frame)
 {
+    const uint16_t *line = GLOBE_LINE[frame & 7];
     if (state == 2) {
-        icon_globe(c, x, y, c->info);
+        blit_mask(c, x, y, GLOBE_FILL, c->info);
+        blit_mask(c, x, y, line, c->white);
         return;
     }
-    icon_globe(c, x, y, c->muted);
-    line(c, x + 2, y + 2, x + 12, y + 12, c->crit);
-    line(c, x + 12, y + 2, x + 2, y + 12, c->crit);
+    blit_mask(c, x, y, GLOBE_FILL, c->muted);
+    blit_mask(c, x, y, line, c->faint);
+    blit_mask(c, x, y, GLOBE_X, c->crit);
 }
 
 static uint16_t level_col(canvas_t *c, int level)
@@ -832,9 +828,9 @@ static void paint_bar(canvas_t *c)
     fill_rect(c, 0, BAR_H, CYD_W, 1, c->line);
 }
 
-static void paint_wifi(canvas_t *c, int state)
+static void paint_wifi(canvas_t *c, int state, int frame)
 {
-    wifi_icon(c, WIFI_X, 4, state);
+    wifi_icon(c, WIFI_X, 4, state, frame);
 }
 
 static int badge_width(const cyd_scene_t *s)
@@ -872,12 +868,12 @@ static void draw_badge(canvas_t *c, const cyd_scene_t *s, int x)
     text(c, x + (w - tw) / 2, 8, 1, t, c->white);
 }
 
-static void paint_title_bar(canvas_t *c, const char *title, const char *hint, int net)
+static void paint_title_bar(canvas_t *c, const char *title, const char *hint, int net, int frame)
 {
     int title_end;
     paint_bar(c);
     text(c, MARGIN, 4, 2, title, c->white);
-    paint_wifi(c, net);
+    paint_wifi(c, net, frame);
     title_end = MARGIN + text_px(title, 2) + 8;
     if (hint && hint[0]) {
         int hw = text_px(hint, 1);
@@ -905,7 +901,7 @@ static void paint_alerts(canvas_t *c, const cyd_scene_t *s)
     int y = 32;
     int card_h = s->updates > 0 ? 34 : 42;
     int stride = card_h + 6;
-    paint_title_bar(c, "Alertas", "toque = visto", s->net_state);
+    paint_title_bar(c, "Alertas", "toque = visto", s->net_state, s->net_frame);
     if (s->updates > 0) {
         char u[40];
         snprintf(u, sizeof u, "%d atualizacao(oes) no HA", s->updates);
@@ -932,7 +928,7 @@ static void paint_alerts(canvas_t *c, const cyd_scene_t *s)
 
 static void paint_portal(canvas_t *c, const cyd_scene_t *s)
 {
-    paint_title_bar(c, "Portal", NULL, s->net_state);
+    paint_title_bar(c, "Portal", NULL, s->net_state, s->net_frame);
     fill_round(c, 12, 36, CYD_W - 24, 188, 12, c->card);
     text_center(c, 48, 2, "Conecte no Wi-Fi", c->white);
     text_center(c, 76, 3, "ESP32-Setup", c->warm);
@@ -1040,7 +1036,7 @@ static void paint_home_bar(canvas_t *c, const cyd_scene_t *scene, const char *hh
     int bw;
     paint_bar(c);
     aa_text(c, MARGIN, 2, 0, hhmm, c->white, 1);
-    paint_wifi(c, scene->net_state);
+    paint_wifi(c, scene->net_state, scene->net_frame);
     bw = badge_width(scene);
     if (bw) {
         draw_badge(c, scene, 96);
@@ -1171,7 +1167,7 @@ static void paint_saver_bar(canvas_t *c, const cyd_scene_t *scene)
         date_line(scene, date, sizeof date);
         text_center(c, 8, 1, date, c->muted);
     }
-    paint_wifi(c, scene->net_state);
+    paint_wifi(c, scene->net_state, scene->net_frame);
 }
 
 static void paint_glance_card(canvas_t *c, const cyd_scene_t *scene)

@@ -932,6 +932,7 @@ static void display_task(void *arg)
     cyd_splash_play(s_panel, CYD_W, CYD_H, 2);
     int64_t idle_since = esp_timer_get_time();
     int frame = 0;
+    int net_hold = 0;
     int last_mode = -1;
     int behavior = 0, beh_start = 0, beh_len = 24;
     int cat_force = -1, cat_hold = 0, cat_phase0 = 0, cat_salt = 0, prev_alerts = 0;
@@ -1062,7 +1063,14 @@ static void display_task(void *arg)
             ha_snapshot_t hs;
             ha_client_copy(&hs);
             scene.updates = hs.updates;
-            scene.net_state = cyd_net_ok() ? 2 : 0;
+            if (cyd_net_ok()) {
+                scene.net_state = 2;
+                /* 500 ms per longitude step: one turn is about 4 s. */
+                net_hold = (int)((esp_timer_get_time() / 500000LL) & 7);
+            } else {
+                scene.net_state = 0;
+            }
+            scene.net_frame = net_hold;
         }
         if (cyd_cfg()->alerts) {
             int n = fill_alerts(&scene, alert_ids);
