@@ -775,26 +775,36 @@ static void test_bars(canvas_t *c)
     }
 }
 
-/* Four bars. Green: internet. Slash: no Wi-Fi or Wi-Fi without the check.
- * Grey bars and no slash: the check has not run yet. */
+/* 15x15 globe. Bit 14 of each row is the leftmost pixel. */
+static const uint16_t GLOBE_ROWS[15] = {
+    0x01C0, 0x0630, 0x0808, 0x1084, 0x1144,
+    0x2222, 0x2412, 0x3FFE, 0x2412, 0x2222,
+    0x1144, 0x1084, 0x0808, 0x0630, 0x01C0,
+};
+
+static void icon_globe(canvas_t *c, int x, int y, uint16_t col)
+{
+    for (int row = 0; row < 15; row++) {
+        uint16_t bits = GLOBE_ROWS[row];
+        for (int col_i = 0; col_i < 15; col_i++) {
+            if (bits & (1u << (14 - col_i))) {
+                plot(c, x + col_i, y + row, col);
+            }
+        }
+    }
+}
+
+/* net_state 2: accent globe (internet confirmed). Any other value: grey
+ * globe and a red X, including before the first successful probe. */
 static void wifi_icon(canvas_t *c, int x, int y, int state)
 {
-    uint16_t on = state == 2 ? c->ok : (state == 3 ? c->faint : c->muted);
-    static const uint8_t bh[4] = {3, 6, 9, 12};
-    for (int i = 0; i < 4; i++) {
-        int h = bh[i];
-        uint16_t col = on;
-        if (state == 0) {
-            col = c->faint;
-        } else if (state == 1) {
-            col = i >= 2 ? on : c->faint;
-        }
-        fill_rect(c, x + 1 + i * 4, y + (12 - h), 3, h, col);
+    if (state == 2) {
+        icon_globe(c, x, y, c->info);
+        return;
     }
-    if (state == 0 || state == 1) {
-        line(c, x + 1, y + 1, x + 15, y + 13, c->crit);
-        line(c, x, y + 2, x + 14, y + 14, c->crit);
-    }
+    icon_globe(c, x, y, c->muted);
+    line(c, x + 2, y + 2, x + 12, y + 12, c->crit);
+    line(c, x + 12, y + 2, x + 2, y + 12, c->crit);
 }
 
 static uint16_t level_col(canvas_t *c, int level)
@@ -824,7 +834,7 @@ static void paint_bar(canvas_t *c)
 
 static void paint_wifi(canvas_t *c, int state)
 {
-    wifi_icon(c, WIFI_X, 5, state);
+    wifi_icon(c, WIFI_X, 4, state);
 }
 
 static int badge_width(const cyd_scene_t *s)

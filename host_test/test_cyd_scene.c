@@ -217,6 +217,35 @@ static void test_cat_poses_keep_the_calico(void)
     }
 }
 
+static void test_globe_is_binary(void)
+{
+    cyd_scene_t s;
+    uint16_t info = rgb565(96, 148, 232);
+    uint16_t muted = rgb565(154, 168, 190);
+
+    base_scene(&s);
+    s.mode = CYD_UI_HOME;
+    s.net_state = 2;
+    paint(&s);
+    TEST_ASSERT_EQUAL_UINT16(info, px(303, 4));
+    TEST_ASSERT_EQUAL_UINT16(info, px(303, 11));
+
+    s.net_state = 0;
+    paint(&s);
+    TEST_ASSERT_EQUAL_UINT16(muted, px(303, 4));
+    TEST_ASSERT_EQUAL_UINT16(crit, px(303, 11));
+
+    s.net_state = 1;
+    paint(&s);
+    TEST_ASSERT_EQUAL_UINT16(muted, px(303, 4));
+    TEST_ASSERT_EQUAL_UINT16(crit, px(303, 11));
+
+    s.net_state = 3;
+    paint(&s);
+    TEST_ASSERT_EQUAL_UINT16(muted, px(303, 4));
+    TEST_ASSERT_EQUAL_UINT16(crit, px(303, 11));
+}
+
 static void test_empty_home_keeps_the_cat(void)
 {
     cyd_scene_t s;
@@ -238,5 +267,6 @@ int main(void)
     RUN_TEST(test_sleep_and_bars_and_stable);
     RUN_TEST(test_cat_poses_keep_the_calico);
     RUN_TEST(test_empty_home_keeps_the_cat);
+    RUN_TEST(test_globe_is_binary);
     return UNITY_END();
 }

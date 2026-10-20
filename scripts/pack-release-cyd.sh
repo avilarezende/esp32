@@ -14,7 +14,7 @@ if [ -z "${IDF_PATH:-}" ]; then
   fi
 fi
 
-idf.py -B build_cyd -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
+idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
 
 mkdir -p release/cyd
 cp -f build_cyd/bootloader/bootloader.bin release/cyd/bootloader.bin

@@ -49,7 +49,8 @@ flash.bat COM3
   Inversão e brilho gravados por `POST /config` ou `POST /display` entram na
   próxima passagem da tarefa da tela (`display_task`). O servidor HTTP não
   mexe no painel nem na backlight.
-- Ícone de internet na tela de descanso.
+- Globo de internet na barra de todas as páginas (azul com HTTP 204; cinza
+  com X sem internet). O chip do HA continua separado. Detalhe abaixo.
 - Alertas do HA (`POST /alert`, `GET /alerts`), selo, lista e **LIMPAR TUDO**.
 - OTA por HTTP com duas partições e rollback (`POST /ota`).
 - Se a tarefa da tela não der uma volta em **45 s** (visor da câmera incluído),
@@ -72,6 +73,29 @@ Manual: [Get Started do ESP-IDF 5.3.2](https://docs.espressif.com/projects/esp-i
 ```bash
 . "$HOME/esp/esp-idf/export.sh"
 ```
+
+## Globo de internet
+
+O globo no canto direito da barra de status (observação, protetor, alertas e
+portal) mostra se a placa alcança a internet. Azul: a última sonda teve HTTP
+204. Cinza com um X vermelho: sem internet. Não é o RSSI do Wi-Fi e não é o
+chip do Home Assistant (`HA ok`, `aguardando`, `offline`).
+
+A tarefa `cyd_net` não bloqueia a tela nem o poller do HA:
+
+- Sem IP de estação, o globo fica cinza com X na hora. A tarefa acorda a cada
+  2 s só para ver se o link voltou. Essa queda não entra na contagem de falhas.
+- Com IP, a cada 45 s ela tenta, nesta ordem, e para no primeiro HTTP **204**:
+  1. `http://connectivitycheck.gstatic.com/generate_204`
+  2. `http://www.gstatic.com/generate_204`
+  3. `http://cp.cloudflare.com/`
+- Em cada URL: DNS (lwIP, timeout 2 s) e, se o nome resolver, GET com timeout
+  de 2,5 s, sem seguir redirect. Resposta 200 não conta.
+- Uma rodada em que as três falham conta como uma falha. Duas falhas seguidas
+  mostram o X. Um sucesso mostra o globo azul na hora e zera a contagem.
+- Antes do primeiro sucesso o globo já começa cinza com X.
+- O campo de URL em Ajustes (`net_url`, NVS `c_net`) continua gravado, mas o
+  globo não o usa.
 
 ## Fluxo de Wi-Fi
 
@@ -150,8 +174,8 @@ de 1,94 MB. Quem já gravou uma imagem antiga precisa de **um último flash por
 cabo** ([INSTALACAO.md](docs/INSTALACAO.md)); as próximas trocas são `POST /ota`.
 
 ```bash
-idf.py -B build_cyd -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
-idf.py -B build_cyd -p /dev/ttyUSB0 flash monitor
+idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
+idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -p /dev/ttyUSB0 flash monitor
 ```
 
 Porta serial: `/dev/ttyUSB0` ou `/dev/ttyACM0` no Linux, `COMx` no Windows,

@@ -69,4 +69,6 @@ A chave são os 16 primeiros hex de `sha256(token longo)`. Detalhes em
 1. Se a NVS foi preservada e já havia rede, o painel segue sozinho.
 2. Se não: Wi-Fi `ESP32-Setup` / `esp32setup` → `http://192.168.4.1`.
 3. Home Assistant em **porta 80**: endereço `http://192.168.0.10` e o token longo.
-4. Painel em `HA ok`; 30 s → relógio (ícone de internet); 40 min → tela off.
+4. Painel em `HA ok`; 30 s → relógio (globo de internet); 40 min → tela off.
+   O globo azul é internet (HTTP 204); o cinza com X é sem internet. O chip
+   `HA ok` é outra coisa.

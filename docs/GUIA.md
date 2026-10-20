@@ -48,8 +48,8 @@ seguida a tela de observação ou o portal.
 ### Portal (sem Wi-Fi de casa)
 
 Enquanto a placa não tem IP de estação, o painel mostra um cartão com o jeito
-de conectar o celular. A barra de status diz **Portal** e o ícone de internet
-fica com o corte de “sem rede”:
+de conectar o celular. A barra de status diz **Portal** e o globo fica cinza
+com um X vermelho, porque ainda não há internet:
 
 ![Portal no painel](images/cyd-panel-portal.png)
 
@@ -133,10 +133,27 @@ e umidade ficam num cartão; o gato calico fica no centro:
 
 ![Protetor](images/cyd-saver-ha.png)
 
-O ícone consulta a URL salva (padrão
-`http://connectivitycheck.gstatic.com/generate_204`). Barras verdes: HTTP 200 ou
-204. Barras com um corte vermelho: sem Wi-Fi ou Wi-Fi sem essa resposta. Cinza:
-ainda não houve teste. Na observação e nos alertas o mesmo ícone fica na barra.
+O globo no canto direito da barra mostra se há **internet**, nas quatro
+páginas. Azul: a sonda confirmou. Cinza com um X vermelho: sem internet.
+Não é o sinal do Wi-Fi e não é o chip do Home Assistant (`HA ok`,
+`aguardando`, `offline`), que continua à parte.
+
+A tarefa `cyd_net` não bloqueia a tela nem o poller do HA:
+
+- Sem IP de estação, o X aparece na hora. A tarefa só acorda a cada **2 s**
+  para ver se o link voltou. Essa queda não conta como falha da sonda.
+- Com IP, a cada **45 s** ela tenta, nesta ordem, e para no primeiro HTTP
+  **204** (redirect desligado; HTTP 200 não conta):
+  1. `http://connectivitycheck.gstatic.com/generate_204`
+  2. `http://www.gstatic.com/generate_204`
+  3. `http://cp.cloudflare.com/`
+- Em cada URL: DNS pelo lwIP, timeout **2 s**; se o nome resolver, GET com
+  timeout de **2,5 s**.
+- Uma rodada em que as três falham conta como uma falha. **Duas falhas
+  seguidas** mostram o X. **Um sucesso** mostra o globo azul na hora e zera
+  a contagem. Antes do primeiro sucesso o globo já começa cinza com X.
+- O campo de URL em Ajustes (`net_url`, NVS `c_net`) continua gravado, mas
+  o globo não o consulta.
 
 Um toque volta à observação. Após **40 minutos** sem uso a backlight apaga; um
 toque acorda o painel. O gato respira, pisca devagar, mexe o rabo e, de vez
@@ -188,7 +205,8 @@ O mesmo aparelho serve a interface no navegador, na porta **80**:
 - **Ajustes → Tela do CYD** grava em `GET /config` e `POST /config`: entidades,
   ração, câmeras, rótulo e ícone do botão, duração da campainha, intervalo do
   snapshot, brilho (5–100%), inverter cores, BGR, segundos até o descanso,
-  gato, relógio 24 h, alertas e URL de teste de internet.
+  gato, relógio 24 h, alertas e a URL salva em `net_url`. Essa URL não pinta
+  o globo; a sonda usa a lista fixa descrita em [Protetor de tela](#protetor-de-tela).
 - **Atualizar firmware** envia `esp32-ota.bin` (ou uma URL) com a chave do
   aparelho. Ver [INSTALACAO.md](INSTALACAO.md).
 
@@ -364,8 +382,8 @@ Veja [INSTALACAO.md](INSTALACAO.md). Resumo:
 
 ```bash
 . "$HOME/esp/esp-idf/export.sh"
-idf.py -B build_cyd -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
-idf.py -B build_cyd -p PORTA flash monitor
+idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
+idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -p PORTA flash monitor
 ```
 
 ## Pacote pronto
