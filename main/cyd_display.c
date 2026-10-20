@@ -8,14 +8,17 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <stdatomic.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_ili9341.h"
+#include "esp_lcd_panel_commands.h"
 #include "esp_idf_version.h"
 #include "esp_log.h"
 #include "esp_netif_sntp.h"
@@ -37,6 +40,7 @@ static const char *TAG = "cyd";
 /* ESP32-2432S028 (Cheap Yellow Display, 2.8"). Same pins as TFT_eSPI's CYD setup. */
 #define PIN_LCD_SCLK 14
 #define PIN_LCD_MOSI 13
+#define PIN_LCD_MISO 12 /* ILI9341 SDO; input, so it does not change the GPIO12 strap at reset */
 #define PIN_LCD_CS   15
 #define PIN_LCD_DC   2
 #define PIN_LCD_BL   21
@@ -388,7 +392,7 @@ static esp_err_t panel_bringup(void)
     spi_bus_config_t bus = {
         .sclk_io_num = PIN_LCD_SCLK,
         .mosi_io_num = PIN_LCD_MOSI,
-        .miso_io_num = -1,
+        .miso_io_num = PIN_LCD_MISO,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
         .max_transfer_sz = CYD_W * BAND_H * (int)sizeof(uint16_t),
@@ -487,9 +491,12 @@ static esp_err_t panel_bringup(void)
     return ESP_OK;
 }
 
+static void shot_service(void);
+
 static void wait_release(int max_ms)
 {
     for (int t = 0; t < max_ms && touch_down(); t += 30) {
+        shot_service();
         vTaskDelay(pdMS_TO_TICKS(30));
     }
 }
@@ -507,6 +514,7 @@ static void run_camera(const char *entity, int secs)
 {
     ESP_LOGI(TAG, "camera %s for %ds", entity, secs);
     set_screen(1);
+    shot_service();
     wait_release(1500);
     fill_black();
     int64_t until = esp_timer_get_time() + (int64_t)secs * 1000000;
@@ -514,6 +522,7 @@ static void run_camera(const char *entity, int secs)
     while (esp_timer_get_time() < until) {
         int64_t t0 = esp_timer_get_time();
         s_disp_beat = t0;
+        shot_service();
         uint8_t *jpg = NULL;
         int len = 0;
         if (ha_client_fetch_camera(entity, &jpg, &len) == ESP_OK &&
@@ -526,6 +535,7 @@ static void run_camera(const char *entity, int secs)
         free(jpg);
         /* ~1 frame per second; a new tap closes the viewer. */
         while ((esp_timer_get_time() - t0) < (int64_t)cyd_cfg()->cam_ms * 1000) {
+            shot_service();
             if (touch_down()) {
                 wait_release(1500);
                 return;
@@ -586,6 +596,253 @@ static void apply_pending(void)
     }
 }
 
+/* Screenshot handshake. HTTP only flips the state to REQ; this task is the
+ * only one that touches the panel. Bands are 4 RGB565 rows (2560 bytes),
+ * bottom row first, passed through a queue. */
+#define CYD_SHOT_ROWS 4
+_Static_assert(CYD_W * CYD_SHOT_ROWS * 2 >= 2048, "shared shot buffer under 2KB");
+_Static_assert(CYD_W * CYD_SHOT_ROWS * 2 <= 4096, "shared shot buffer over 4KB");
+
+enum { SHOT_IDLE = 0, SHOT_REQ = 1, SHOT_RUN = 2, SHOT_CANCEL = 3 };
+
+static atomic_int s_shot_st;
+static atomic_int s_in_shot;
+static QueueHandle_t s_shot_q;
+static QueueHandle_t s_shot_ackq;
+static uint16_t s_shot[CYD_W * CYD_SHOT_ROWS];
+/* One ILI9341 read: dummy byte + 320 * RGB. */
+static uint8_t s_raw[1 + CYD_W * 3];
+/* Full-frame RGB565 sprite, row-major. The stock UI never installs one
+ * (each band is painted and discarded), so capture reads the panel. */
+static const uint16_t *s_sprite;
+
+static int shot_waiting(void)
+{
+    return atomic_load(&s_shot_st) == SHOT_REQ;
+}
+
+static int shot_ensure(void)
+{
+    if (s_shot_q && s_shot_ackq) {
+        return 1;
+    }
+    if (!s_shot_q) {
+        s_shot_q = xQueueCreate(1, sizeof(int));
+    }
+    if (!s_shot_ackq) {
+        s_shot_ackq = xQueueCreate(1, sizeof(uint8_t));
+    }
+    return s_shot_q && s_shot_ackq;
+}
+
+static void shot_drain(void)
+{
+    int dump;
+    uint8_t ack;
+    while (s_shot_q && xQueueReceive(s_shot_q, &dump, 0) == pdTRUE) {
+    }
+    while (s_shot_ackq && xQueueReceive(s_shot_ackq, &ack, 0) == pdTRUE) {
+    }
+}
+
+static void store_px(uint16_t *dst, uint16_t c)
+{
+    if (cyd_cfg()->inv) {
+        c ^= 0xFFFF; /* INVON flips the glass, not the GRAM */
+    }
+    *dst = c;
+}
+
+static esp_err_t panel_read_line(uint16_t *dst, int y)
+{
+    uint8_t caset[4] = {
+        0, 0, (uint8_t)((CYD_W - 1) >> 8), (uint8_t)(CYD_W - 1),
+    };
+    uint8_t raset[4] = {
+        (uint8_t)(y >> 8), (uint8_t)y, (uint8_t)(y >> 8), (uint8_t)y,
+    };
+    esp_err_t err = esp_lcd_panel_io_tx_param(s_lcd_io, LCD_CMD_CASET, caset, 4);
+    if (err == ESP_OK) {
+        err = esp_lcd_panel_io_tx_param(s_lcd_io, LCD_CMD_RASET, raset, 4);
+    }
+    if (err != ESP_OK) {
+        return err;
+    }
+    /* RAMRD clocks one dummy byte, then R, G, B (top 6 bits) per pixel. */
+    err = esp_lcd_panel_io_rx_param(s_lcd_io, LCD_CMD_RAMRD, s_raw, sizeof s_raw);
+    if (err != ESP_OK) {
+        return err;
+    }
+    const uint8_t *p = s_raw + 1;
+    for (int x = 0; x < CYD_W; x++, p += 3) {
+        uint16_t c = (uint16_t)(((p[0] & 0xF8) << 8) | ((p[1] & 0xFC) << 3) | (p[2] >> 3));
+        store_px(&dst[x], c);
+    }
+    return ESP_OK;
+}
+
+/* One screen line into `dst`. Sprite/framebuffer when one is installed,
+ * otherwise the ILI9341 GRAM. Display task only. */
+static esp_err_t read_line(uint16_t *dst, int y)
+{
+    s_disp_beat = esp_timer_get_time();
+    if (s_sprite) {
+        const uint16_t *src = s_sprite + (size_t)y * CYD_W;
+        for (int x = 0; x < CYD_W; x++) {
+            store_px(&dst[x], src[x]);
+        }
+        return ESP_OK;
+    }
+    if (!s_lcd_io) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return panel_read_line(dst, y);
+}
+
+/* `rows` of screen y, stored bottom-up so the HTTP task can stream a BMP. */
+static esp_err_t read_band(uint16_t *dst, int y, int rows)
+{
+    for (int i = 0; i < rows; i++) {
+        if (atomic_load(&s_shot_st) != SHOT_RUN) {
+            return ESP_ERR_INVALID_STATE;
+        }
+        if (read_line(dst + i * CYD_W, y + rows - 1 - i) != ESP_OK) {
+            return ESP_FAIL;
+        }
+    }
+    return ESP_OK;
+}
+
+static int shot_send(int rows)
+{
+    int64_t t0 = esp_timer_get_time();
+    for (;;) {
+        s_disp_beat = esp_timer_get_time();
+        if (atomic_load(&s_shot_st) != SHOT_RUN) {
+            return 0;
+        }
+        if (xQueueSend(s_shot_q, &rows, pdMS_TO_TICKS(200)) == pdTRUE) {
+            return 1;
+        }
+        if (esp_timer_get_time() - t0 > (int64_t)CYD_SHOT_TIMEOUT_MS * 1000) {
+            return 0;
+        }
+    }
+}
+
+static int shot_wait_ack(void)
+{
+    int64_t t0 = esp_timer_get_time();
+    for (;;) {
+        s_disp_beat = esp_timer_get_time();
+        if (atomic_load(&s_shot_st) != SHOT_RUN) {
+            return 0;
+        }
+        uint8_t ack;
+        if (xQueueReceive(s_shot_ackq, &ack, pdMS_TO_TICKS(200)) == pdTRUE) {
+            return atomic_load(&s_shot_st) == SHOT_RUN;
+        }
+        if (esp_timer_get_time() - t0 > (int64_t)CYD_SHOT_TIMEOUT_MS * 1000) {
+            return 0;
+        }
+    }
+}
+
+static void shot_service(void)
+{
+    int expected = SHOT_REQ;
+    if (!atomic_compare_exchange_strong(&s_shot_st, &expected, SHOT_RUN)) {
+        return;
+    }
+    atomic_store(&s_in_shot, 1);
+    s_disp_beat = esp_timer_get_time();
+    apply_pending();
+    cyd_lcd_drain();
+
+    int failed = 0;
+    for (int y = CYD_H; y > 0; ) {
+        s_disp_beat = esp_timer_get_time();
+        int rows = CYD_SHOT_ROWS;
+        if (rows > y) {
+            rows = y;
+        }
+        int y0 = y - rows;
+        if (read_band(s_shot, y0, rows) != ESP_OK || !shot_send(rows) || !shot_wait_ack()) {
+            failed = 1;
+            break;
+        }
+        y = y0;
+    }
+    if (!failed) {
+        int done = 0;
+        shot_send(done);
+    } else {
+        int err = -1;
+        xQueueSend(s_shot_q, &err, 0);
+    }
+    atomic_store(&s_shot_st, SHOT_IDLE);
+    atomic_store(&s_in_shot, 0);
+}
+
+esp_err_t cyd_display_shot_begin(void)
+{
+    if (!shot_ensure()) {
+        return ESP_ERR_NO_MEM;
+    }
+    /* Drop a stale band before publishing REQ, so display_task cannot
+     * enqueue the new frame until the queue is empty. */
+    shot_drain();
+    int idle = SHOT_IDLE;
+    if (!atomic_compare_exchange_strong(&s_shot_st, &idle, SHOT_REQ)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return ESP_OK;
+}
+
+int cyd_display_shot_recv(const uint16_t **rgb565, int *rows, int timeout_ms)
+{
+    int msg = 0;
+    if (xQueueReceive(s_shot_q, &msg, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        return -1;
+    }
+    if (msg < 0) {
+        return -1;
+    }
+    if (msg == 0) {
+        return 0;
+    }
+    *rgb565 = s_shot;
+    *rows = msg;
+    return 1;
+}
+
+void cyd_display_shot_ack(void)
+{
+    uint8_t ack = 1;
+    xQueueSend(s_shot_ackq, &ack, pdMS_TO_TICKS(CYD_SHOT_TIMEOUT_MS));
+}
+
+void cyd_display_shot_end(void)
+{
+    int st = atomic_load(&s_shot_st);
+    if (st == SHOT_IDLE) {
+        return;
+    }
+    if (st == SHOT_REQ) {
+        int expected = SHOT_REQ;
+        if (atomic_compare_exchange_strong(&s_shot_st, &expected, SHOT_IDLE)) {
+            return;
+        }
+    }
+    atomic_store(&s_shot_st, SHOT_CANCEL);
+    uint8_t ack = 1;
+    int64_t t0 = esp_timer_get_time();
+    while (atomic_load(&s_in_shot) && esp_timer_get_time() - t0 < 1000000) {
+        xQueueSend(s_shot_ackq, &ack, 0);
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
 static void display_task(void *arg)
 {
     (void)arg;
@@ -605,6 +862,7 @@ static void display_task(void *arg)
         s_disp_beat = esp_timer_get_time();
         maybe_sntp();
         apply_pending();
+        shot_service();
 
         /* Camera requested by HA (doorbell) or by the quick button. */
         char cam[64] = {0};
@@ -769,6 +1027,9 @@ static void display_task(void *arg)
 
         int samples = (scene.mode == CYD_UI_SLEEP) ? 10 : 5;
         for (int i = 0; i < samples; i++) {
+            if (shot_waiting()) {
+                break;
+            }
             vTaskDelay(pdMS_TO_TICKS(50));
             if (s_cam_secs > 0) {
                 break;
@@ -813,6 +1074,14 @@ void cyd_alerts_json(char *buf, size_t n) { if (n) snprintf(buf, n, "[]"); }
 void cyd_display_show_camera(const char *entity, int seconds) { (void)entity; (void)seconds; }
 void cyd_lcd_drain(void) {}
 void cyd_display_set_color(int invert, int bgr, int test) { (void)invert; (void)bgr; (void)test; }
+esp_err_t cyd_display_shot_begin(void) { return ESP_ERR_INVALID_STATE; }
+int cyd_display_shot_recv(const uint16_t **rgb565, int *rows, int timeout_ms)
+{
+    (void)rgb565; (void)rows; (void)timeout_ms;
+    return -1;
+}
+void cyd_display_shot_ack(void) {}
+void cyd_display_shot_end(void) {}
 
 
 esp_err_t cyd_display_start(void)
