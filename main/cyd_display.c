@@ -34,6 +34,8 @@
 #include "esp_heap_caps.h"
 #include "ha_client.h"
 #include "wifi_manager.h"
+#include "cyd_bmp.h"
+#include "soc/soc_caps.h"
 
 static const char *TAG = "cyd";
 
@@ -408,7 +410,9 @@ static esp_err_t panel_bringup(void)
     esp_lcd_panel_io_spi_config_t io_cfg = {
         .dc_gpio_num = PIN_LCD_DC,
         .cs_gpio_num = PIN_LCD_CS,
-        .pclk_hz = 20 * 1000 * 1000,
+        /* One clock for writes and reads. ILI9341 RAMRD is not reliable
+         * above about 10 MHz, and 10 MHz divides the 80 MHz APB exactly. */
+        .pclk_hz = 10 * 1000 * 1000,
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
         .spi_mode = 0,
@@ -610,8 +614,10 @@ static atomic_int s_in_shot;
 static QueueHandle_t s_shot_q;
 static QueueHandle_t s_shot_ackq;
 static uint16_t s_shot[CYD_W * CYD_SHOT_ROWS];
-/* One ILI9341 read: dummy byte + 320 * RGB. */
-static uint8_t s_raw[1 + CYD_W * 3];
+_Static_assert(CYD_LCD_READ_FIFO <= SOC_SPI_MAXIMUM_BUFFER_SIZE,
+               "LCD read chunk exceeds the non-DMA SPI FIFO");
+_Static_assert(1 + CYD_LCD_READ_PX(CYD_LCD_READ_FIFO) * 3 <= CYD_LCD_READ_FIFO,
+               "RGB666 chunk does not fit in one SPI transaction");
 /* Full-frame RGB565 sprite, row-major. The stock UI never installs one
  * (each band is painted and discarded), so capture reads the panel. */
 static const uint16_t *s_sprite;
@@ -653,6 +659,27 @@ static void store_px(uint16_t *dst, uint16_t c)
     *dst = c;
 }
 
+/* One RAMRD or RAMRD-continue burst. Both commands clock a dummy byte and
+ * then RGB666 (top 6 bits of R, G, B). `px` must fit in the non-DMA FIFO. */
+static esp_err_t panel_read_chunk(int cmd, uint16_t *dst, int px)
+{
+    uint8_t raw[CYD_LCD_READ_FIFO];
+    int nbytes = 1 + px * 3;
+    if (px <= 0 || nbytes > (int)sizeof raw) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    esp_err_t err = esp_lcd_panel_io_rx_param(s_lcd_io, cmd, raw, nbytes);
+    if (err != ESP_OK) {
+        return err;
+    }
+    const uint8_t *p = raw + 1;
+    for (int i = 0; i < px; i++, p += 3) {
+        uint16_t c = (uint16_t)(((p[0] & 0xF8) << 8) | ((p[1] & 0xFC) << 3) | (p[2] >> 3));
+        store_px(&dst[i], c);
+    }
+    return ESP_OK;
+}
+
 static esp_err_t panel_read_line(uint16_t *dst, int y)
 {
     uint8_t caset[4] = {
@@ -668,15 +695,24 @@ static esp_err_t panel_read_line(uint16_t *dst, int y)
     if (err != ESP_OK) {
         return err;
     }
-    /* RAMRD clocks one dummy byte, then R, G, B (top 6 bits) per pixel. */
-    err = esp_lcd_panel_io_rx_param(s_lcd_io, LCD_CMD_RAMRD, s_raw, sizeof s_raw);
-    if (err != ESP_OK) {
-        return err;
-    }
-    const uint8_t *p = s_raw + 1;
-    for (int x = 0; x < CYD_W; x++, p += 3) {
-        uint16_t c = (uint16_t)(((p[0] & 0xF8) << 8) | ((p[1] & 0xFC) << 3) | (p[2] >> 3));
-        store_px(&dst[x], c);
+    /* SPI_DMA_DISABLED caps one transfer at the 64-byte FIFO. 21 px is
+     * 1 dummy + 63 colour bytes. RAMRD starts the line; 0x3E continues it
+     * after CS is released between transactions. */
+    const int px_chunk = cyd_lcd_read_px(CYD_LCD_READ_FIFO);
+    int x = 0;
+    int cmd = LCD_CMD_RAMRD;
+    while (x < CYD_W) {
+        s_disp_beat = esp_timer_get_time();
+        int n = CYD_W - x;
+        if (n > px_chunk) {
+            n = px_chunk;
+        }
+        err = panel_read_chunk(cmd, dst + x, n);
+        if (err != ESP_OK) {
+            return err;
+        }
+        x += n;
+        cmd = LCD_CMD_RAMRDC;
     }
     return ESP_OK;
 }
@@ -706,8 +742,9 @@ static esp_err_t read_band(uint16_t *dst, int y, int rows)
         if (atomic_load(&s_shot_st) != SHOT_RUN) {
             return ESP_ERR_INVALID_STATE;
         }
-        if (read_line(dst + i * CYD_W, y + rows - 1 - i) != ESP_OK) {
-            return ESP_FAIL;
+        esp_err_t err = read_line(dst + i * CYD_W, y + rows - 1 - i);
+        if (err != ESP_OK) {
+            return err;
         }
     }
     return ESP_OK;
@@ -759,7 +796,7 @@ static void shot_service(void)
     apply_pending();
     cyd_lcd_drain();
 
-    int failed = 0;
+    int fail_msg = 0;
     for (int y = CYD_H; y > 0; ) {
         s_disp_beat = esp_timer_get_time();
         int rows = CYD_SHOT_ROWS;
@@ -767,18 +804,27 @@ static void shot_service(void)
             rows = y;
         }
         int y0 = y - rows;
-        if (read_band(s_shot, y0, rows) != ESP_OK || !shot_send(rows) || !shot_wait_ack()) {
-            failed = 1;
+        esp_err_t err = read_band(s_shot, y0, rows);
+        if (err != ESP_OK) {
+            if (err != ESP_ERR_INVALID_STATE) {
+                ESP_LOGE(TAG, "screenshot read failed: %s (0x%x)", esp_err_to_name(err), (unsigned)err);
+                fail_msg = -2;
+            } else {
+                fail_msg = -1;
+            }
+            break;
+        }
+        if (!shot_send(rows) || !shot_wait_ack()) {
+            fail_msg = -1;
             break;
         }
         y = y0;
     }
-    if (!failed) {
+    if (!fail_msg) {
         int done = 0;
         shot_send(done);
     } else {
-        int err = -1;
-        xQueueSend(s_shot_q, &err, 0);
+        xQueueSend(s_shot_q, &fail_msg, 0);
     }
     atomic_store(&s_shot_st, SHOT_IDLE);
     atomic_store(&s_in_shot, 0);
@@ -804,6 +850,9 @@ int cyd_display_shot_recv(const uint16_t **rgb565, int *rows, int timeout_ms)
     int msg = 0;
     if (xQueueReceive(s_shot_q, &msg, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
         return -1;
+    }
+    if (msg == -2) {
+        return -2;
     }
     if (msg < 0) {
         return -1;
