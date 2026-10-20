@@ -65,7 +65,9 @@ typedef struct {
 #define CYD_CAMBTN_W 62
 #define CYD_CAMBTN_H 46
 
-/* Alerts badge (home + rest screens). */
+/* Alerts badge sits in the status bar. Opening the list is not this rect:
+ * display_task treats the whole top strip (and the bottom banner) as the
+ * target, so the pill can move without changing the touch behaviour. */
 #define CYD_BADGE_X 196
 #define CYD_BADGE_X_SAVER 4
 #define CYD_BADGE_Y 0

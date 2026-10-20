@@ -16,6 +16,10 @@ typedef struct {
     int y0;
     int bh;
     uint16_t bg;
+    uint16_t bar;
+    uint16_t card;
+    uint16_t lift;
+    uint16_t line;
     uint16_t cream;
     uint16_t orange;
     uint16_t black;
@@ -24,7 +28,17 @@ typedef struct {
     uint16_t warm;
     uint16_t cool;
     uint16_t muted;
+    uint16_t faint;
+    uint16_t ok;
+    uint16_t warn;
+    uint16_t crit;
+    uint16_t info;
 } canvas_t;
+
+/* Status bar and the 8 px page grid. Touch targets in cyd_display.c stay put. */
+#define BAR_H 24
+#define WIFI_X (CYD_W - 24)
+#define MARGIN 8
 
 static void clear_band(canvas_t *c)
 {
@@ -56,6 +70,47 @@ static void fill_rect(canvas_t *c, int x, int y, int w, int h, uint16_t color)
         for (int xx = x1; xx < x2; xx++) {
             row[xx] = color;
         }
+    }
+}
+
+/* Filled rounded rect. Corners are a few clipped rows; the body is one rect. */
+static void fill_round(canvas_t *c, int x, int y, int w, int h, int r, uint16_t color)
+{
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+    if (r < 1) {
+        fill_rect(c, x, y, w, h, color);
+        return;
+    }
+    if (r > w / 2) {
+        r = w / 2;
+    }
+    if (r > h / 2) {
+        r = h / 2;
+    }
+    if (r < 1) {
+        fill_rect(c, x, y, w, h, color);
+        return;
+    }
+    fill_rect(c, x, y + r, w, h - 2 * r, color);
+    for (int i = 0; i < r; i++) {
+        int dy = r - i;
+        int span = r * r - dy * dy;
+        int dx = 0;
+        while ((dx + 1) * (dx + 1) <= span) {
+            dx++;
+        }
+        int inset = r - dx;
+        if (inset < 0) {
+            inset = 0;
+        }
+        int rw = w - 2 * inset;
+        if (rw <= 0) {
+            continue;
+        }
+        fill_rect(c, x + inset, y + i, rw, 1, color);
+        fill_rect(c, x + inset, y + h - 1 - i, rw, 1, color);
     }
 }
 
@@ -601,6 +656,14 @@ static int tri_wave(int p, int period, int amp)
 /* The always-visible cat: several behaviours chosen at random by the display task. */
 static void kitten_act(canvas_t *c, int ox, int oy, int n, int d, const cyd_scene_t *sc_)
 {
+    /* Skip bands that cannot see the cat (stretch, Zs and the tail included).
+     * The scene is painted once per LCD band, so this drops most of the cost. */
+    int top = oy - sc(48, n, d);
+    int bot = oy + sc(190, n, d);
+    if (bot < c->y0 || top >= c->y0 + c->bh) {
+        s_pdx = 0;
+        return;
+    }
     int p = sc_->phase;
     s_pdx = 0;
     switch (sc_->behavior) {
@@ -641,26 +704,43 @@ static void kitten_act(canvas_t *c, int ox, int oy, int n, int d, const cyd_scen
     s_pdx = 0;
 }
 
+static void icon_gate(canvas_t *c, int x, int y, uint16_t col)
+{
+    fill_rect(c, x, y, 3, 22, col);
+    fill_rect(c, x + 33, y, 3, 22, col);
+    fill_rect(c, x + 3, y + 2, 30, 2, col);
+    fill_rect(c, x + 3, y + 18, 30, 2, col);
+    for (int i = 0; i < 4; i++) {
+        fill_rect(c, x + 7 + i * 7, y + 2, 2, 16, col);
+    }
+}
+
+static void icon_cam(canvas_t *c, int x, int y, uint16_t col, uint16_t hole)
+{
+    fill_round(c, x + 2, y + 4, 32, 16, 3, col);
+    fill_rect(c, x + 10, y + 1, 10, 4, col);
+    fill_disc(c, x + 18, y + 12, 5, hole);
+    fill_disc(c, x + 18, y + 12, 2, col);
+}
+
 static void cam_button(canvas_t *c)
 {
     int x = CYD_CAMBTN_X, y = CYD_CAMBTN_Y, w = CYD_CAMBTN_W, h = CYD_CAMBTN_H;
-    fill_rect(c, x, y, w, h, c->muted);
-    fill_rect(c, x + 2, y + 2, w - 4, h - 4, c->bg);
+    fill_round(c, x, y, w, h, 8, c->lift);
     const cyd_cfg_t *cfg = cyd_cfg();
+    int ix = x + (w - 36) / 2;
     if (cfg->btn_icon == 1) {
-        fill_rect(c, x + 14, y + 10, 26, 16, c->warm);
-        fill_tri(c, x + 40, y + 18, x + 50, y + 11, x + 50, y + 25, c->warm);
-        fill_disc(c, x + 27, y + 18, 4, c->bg);
+        icon_cam(c, ix, y + 2, c->warm, c->lift);
     } else {
-        /* gate (portao): two posts, top/bottom rails, vertical bars */
-        fill_rect(c, x + 12, y + 6, 4, 24, c->warm);
-        fill_rect(c, x + w - 16, y + 6, 4, 24, c->warm);
-        fill_rect(c, x + 16, y + 10, w - 32, 2, c->warm);
-        fill_rect(c, x + 16, y + 26, w - 32, 2, c->warm);
-        for (int bx = x + 20; bx < x + w - 18; bx += 5) fill_rect(c, bx, y + 10, 2, 18, c->warm);
+        icon_gate(c, ix, y + 3, c->warm);
     }
     const char *lb = cfg->btn_label[0] ? cfg->btn_label : "Porta";
-    text(c, x + (w - text_px(lb, 1)) / 2, y + h - 14, 1, lb, c->white);
+    int tw = text_px(lb, 1);
+    int tx = x + (w - tw) / 2;
+    if (tx < x + 2) {
+        tx = x + 2;
+    }
+    text(c, tx, y + h - 12, 1, lb, c->white);
 }
 
 static void test_bars(canvas_t *c)
@@ -673,90 +753,161 @@ static void test_bars(canvas_t *c)
     }
 }
 
-
-/* ---- Connectivity icon, alerts badge/banner/list ---- */
-static void arc_pts(canvas_t *c, int cx, int cy, int r, int th, uint16_t col)
-{
-    for (int dy = -r - th; dy <= 0; dy++) {
-        for (int dx = -r - th; dx <= r + th; dx++) {
-            int d2 = dx * dx + dy * dy;
-            if (d2 >= r * r && d2 <= (r + th) * (r + th) && -dy >= (dx < 0 ? -dx : dx)) plot(c, cx + dx, cy + dy, col);
-        }
-    }
-}
-
+/* Four bars. Green: internet. Slash: no Wi-Fi or Wi-Fi without the check.
+ * Grey bars and no slash: the check has not run yet. */
 static void wifi_icon(canvas_t *c, int x, int y, int state)
 {
-    uint16_t ok = rgb565(34, 197, 94), dim = rgb565(71, 85, 105), red = rgb565(239, 68, 68);
-    uint16_t col = state == 2 ? ok : (state == 3 ? c->muted : dim);
-    int cx = x + 14, cy = y + 20;
-    arc_pts(c, cx, cy, 4, 2, col);
-    arc_pts(c, cx, cy, 9, 2, col);
-    arc_pts(c, cx, cy, 14, 2, col);
-    fill_disc(c, cx, cy, 2, col);
-    if (state == 0 || state == 1) {
-        for (int t = -1; t <= 1; t++) {
-            line(c, x + 16 + t, y + 8, x + 28 + t, y + 20, red);
-            line(c, x + 28 + t, y + 8, x + 16 + t, y + 20, red);
+    uint16_t on = state == 2 ? c->ok : (state == 3 ? c->faint : c->muted);
+    static const uint8_t bh[4] = {3, 6, 9, 12};
+    for (int i = 0; i < 4; i++) {
+        int h = bh[i];
+        uint16_t col = on;
+        if (state == 0) {
+            col = c->faint;
+        } else if (state == 1) {
+            col = i >= 2 ? on : c->faint;
         }
+        fill_rect(c, x + 1 + i * 4, y + (12 - h), 3, h, col);
+    }
+    if (state == 0 || state == 1) {
+        line(c, x + 1, y + 1, x + 15, y + 13, c->crit);
+        line(c, x, y + 2, x + 14, y + 14, c->crit);
     }
 }
 
 static uint16_t level_col(canvas_t *c, int level)
 {
-    (void)c;
-    return level >= 2 ? rgb565(220, 38, 38) : (level == 1 ? rgb565(217, 119, 6) : rgb565(37, 99, 235));
+    return level >= 2 ? c->crit : (level == 1 ? c->warn : c->info);
 }
 
-static void alert_badge(canvas_t *c, const cyd_scene_t *s, int bx)
+static uint16_t status_col(canvas_t *c, const char *s)
 {
-    if (s->alert_count <= 0) return;
-    char t[12];
-    snprintf(t, sizeof t, "! %d", s->alert_count > 99 ? 99 : s->alert_count);
-    int lvl = s->alert_rows > 0 ? s->alerts[0].level : 0;
-    fill_rect(c, bx, CYD_BADGE_Y + 2, CYD_BADGE_W, CYD_BADGE_H - 4, level_col(c, lvl));
-    text(c, bx + (CYD_BADGE_W - text_px(t, 1)) / 2, CYD_BADGE_Y + 8, 1, t, c->white);
+    if (!s || !s[0]) {
+        return c->muted;
+    }
+    if (strcmp(s, "HA ok") == 0) {
+        return c->ok;
+    }
+    if (strcmp(s, "aguardando") == 0) {
+        return c->muted;
+    }
+    return c->warn;
+}
+
+static void paint_bar(canvas_t *c)
+{
+    fill_rect(c, 0, 0, CYD_W, BAR_H, c->bar);
+    fill_rect(c, 0, BAR_H, CYD_W, 1, c->line);
+}
+
+static void paint_wifi(canvas_t *c, int state)
+{
+    wifi_icon(c, WIFI_X, 5, state);
+}
+
+static int badge_width(const cyd_scene_t *s)
+{
+    char t[16];
+    int n;
+    if (s->alert_count <= 0) {
+        return 0;
+    }
+    n = s->alert_count > 99 ? 99 : s->alert_count;
+    snprintf(t, sizeof t, "! %d", n);
+    int w = text_px(t, 1) + 12;
+    return w < 28 ? 28 : w;
+}
+
+static void draw_badge(canvas_t *c, const cyd_scene_t *s, int x)
+{
+    char t[16];
+    int tw;
+    int w;
+    int lvl;
+    int n;
+    if (s->alert_count <= 0) {
+        return;
+    }
+    n = s->alert_count > 99 ? 99 : s->alert_count;
+    snprintf(t, sizeof t, "! %d", n);
+    tw = text_px(t, 1);
+    w = tw + 12;
+    if (w < 28) {
+        w = 28;
+    }
+    lvl = s->alert_rows > 0 ? s->alerts[0].level : 0;
+    fill_round(c, x, 4, w, 16, 8, level_col(c, lvl));
+    text(c, x + (w - tw) / 2, 8, 1, t, c->white);
+}
+
+static void paint_title_bar(canvas_t *c, const char *title, const char *hint, int net)
+{
+    int title_end;
+    paint_bar(c);
+    text(c, MARGIN, 4, 2, title, c->white);
+    paint_wifi(c, net);
+    title_end = MARGIN + text_px(title, 2) + 8;
+    if (hint && hint[0]) {
+        int hw = text_px(hint, 1);
+        int x = WIFI_X - 8 - hw;
+        if (x >= title_end) {
+            text(c, x, 8, 1, hint, c->muted);
+        }
+    }
 }
 
 static void alert_banner(canvas_t *c, const cyd_scene_t *s)
 {
-    if (!s->banner || s->alert_rows <= 0) return;
-    const cyd_alert_row_t *a = &s->alerts[0];
-    fill_rect(c, 0, 196, CYD_W, 44, level_col(c, a->level));
-    text(c, 6, 202, 1, a->title, c->white);
-    text(c, 6, 220, 1, a->msg, c->white);
+    const cyd_alert_row_t *a;
+    if (!s->banner || s->alert_rows <= 0) {
+        return;
+    }
+    a = &s->alerts[0];
+    fill_round(c, MARGIN, 192, CYD_W - 2 * MARGIN, 42, 8, level_col(c, a->level));
+    text(c, MARGIN + 12, 198, 1, a->title, c->white);
+    text(c, MARGIN + 12, 216, 1, a->msg, c->white);
 }
 
 static void paint_alerts(canvas_t *c, const cyd_scene_t *s)
 {
-    text(c, 8, 8, 2, "Alertas", c->white);
-    text(c, CYD_W - text_px("toque = visto", 1) - 8, 12, 1, "toque = visto", c->muted);
-    fill_rect(c, 8, 34, CYD_W - 16, 1, c->muted);
-    int y = 40;
+    int y = 32;
+    int card_h = s->updates > 0 ? 34 : 42;
+    int stride = card_h + 6;
+    paint_title_bar(c, "Alertas", "toque = visto", s->net_state);
     if (s->updates > 0) {
         char u[40];
         snprintf(u, sizeof u, "%d atualizacao(oes) no HA", s->updates);
-        text(c, 12, y + 4, 1, u, c->warm);
-        y += 24;
+        fill_round(c, MARGIN, y, CYD_W - 2 * MARGIN, 20, 6, c->card);
+        text(c, MARGIN + 10, y + 6, 1, u, c->warm);
+        y += 26;
     }
-    if (s->alert_rows == 0 && s->updates == 0) text_center(c, 110, 1, "nenhum alerta", c->muted);
-    for (int i = 0; i < s->alert_rows && i < 3 && y < 176; i++, y += 44) {
-        fill_rect(c, 8, y, 4, 38, level_col(c, s->alerts[i].level));
-        text(c, 18, y + 4, 1, s->alerts[i].title, c->white);
-        text(c, 18, y + 22, 1, s->alerts[i].msg, c->muted);
+    if (s->alert_rows == 0 && s->updates == 0) {
+        text_center(c, 96, 1, "nenhum alerta", c->muted);
     }
-    fill_rect(c, 8, 184, CYD_W - 16, 50, rgb565(220, 38, 38));
-    text_center(c, 196, 2, "LIMPAR TUDO", c->white);
+    for (int i = 0; i < s->alert_rows && i < 3 && y + card_h <= 176; i++) {
+        int title_y = y + (card_h >= 40 ? 6 : 4);
+        int msg_y = y + (card_h >= 40 ? 24 : 18);
+        fill_round(c, MARGIN, y, CYD_W - 2 * MARGIN, card_h, 8, c->card);
+        fill_rect(c, MARGIN + 8, y + 8, 4, card_h - 16, level_col(c, s->alerts[i].level));
+        text(c, MARGIN + 20, title_y, 1, s->alerts[i].title, c->white);
+        text(c, MARGIN + 20, msg_y, 1, s->alerts[i].msg, c->muted);
+        y += stride;
+    }
+    /* Touch: ty >= 180 dismisses everything. The button fills that strip. */
+    fill_round(c, MARGIN, 180, CYD_W - 2 * MARGIN, 52, 10, c->crit);
+    text_center(c, 198, 2, "LIMPAR TUDO", c->white);
 }
 
-static void paint_portal(canvas_t *c)
+static void paint_portal(canvas_t *c, const cyd_scene_t *s)
 {
-    text_center(c, 28, 2, "Conecte no Wi-Fi", c->white);
-    text_center(c, 64, 3, "ESP32-Setup", c->warm);
-    text_center(c, 108, 2, "senha", c->muted);
-    text_center(c, 136, 3, "esp32setup", c->white);
-    text_center(c, 184, 2, "Abra no celular", c->muted);
-    text_center(c, 208, 2, "192.168.4.1", c->cool);
+    paint_title_bar(c, "Portal", NULL, s->net_state);
+    fill_round(c, 12, 36, CYD_W - 24, 188, 12, c->card);
+    text_center(c, 48, 2, "Conecte no Wi-Fi", c->white);
+    text_center(c, 76, 3, "ESP32-Setup", c->warm);
+    text_center(c, 112, 1, "senha", c->muted);
+    text_center(c, 128, 3, "esp32setup", c->white);
+    text_center(c, 168, 1, "Abra no celular", c->muted);
+    text_center(c, 188, 2, "192.168.4.1", c->cool);
 }
 
 static void format_date(char *out, int cap, const char *wd, int day, const char *mo)
@@ -815,140 +966,235 @@ static void weather_text(char *left, char *right, int temp, int humidity)
     right[3] = '\0';
 }
 
-static void weather_pair(canvas_t *c, int x, int y, int scale, int temp, int humidity)
+static void format_hhmm(const cyd_scene_t *scene, char out[6])
 {
-    char left[8];
-    char right[8];
-    weather_text(left, right, temp, humidity);
-    int lw = text_px(left, scale);
-    text(c, x, y, scale, left, c->warm);
-    text(c, x + lw + 16, y, scale, right, c->cool);
+    if (scene->time_valid) {
+        out[0] = (char)('0' + scene->hour / 10);
+        out[1] = (char)('0' + scene->hour % 10);
+        out[2] = ':';
+        out[3] = (char)('0' + scene->minute / 10);
+        out[4] = (char)('0' + scene->minute % 10);
+        out[5] = '\0';
+    } else {
+        memcpy(out, "--:--", 6);
+    }
 }
 
-static void paint_saver(canvas_t *c, const cyd_scene_t *scene)
+static void home_weather(const cyd_scene_t *scene, char left[8], char right[8])
 {
-    char hhmm[6];
-    if (scene->time_valid) {
-        hhmm[0] = (char)('0' + scene->hour / 10);
-        hhmm[1] = (char)('0' + scene->hour % 10);
-        hhmm[2] = ':';
-        hhmm[3] = (char)('0' + scene->minute / 10);
-        hhmm[4] = (char)('0' + scene->minute % 10);
-        hhmm[5] = '\0';
+    memcpy(left, "--c", 4);
+    memcpy(right, "--%", 4);
+    if (scene->has_temp && scene->has_humidity) {
+        weather_text(left, right, scene->temp_c, scene->humidity);
+    } else if (scene->has_temp) {
+        weather_text(left, right, scene->temp_c, 0);
+        memcpy(right, "--%", 4);
+    } else if (scene->has_humidity) {
+        weather_text(left, right, 0, scene->humidity);
+        memcpy(left, "--c", 4);
+    }
+}
+
+static void metric_card(canvas_t *c, int x, int y, int w, int h, const char *value, uint16_t col)
+{
+    int vw = text_px(value, 2);
+    fill_round(c, x, y, w, h, 8, c->card);
+    text(c, x + (w - vw) / 2, y + (h - 16) / 2, 2, value, col);
+}
+
+static void paint_home_bar(canvas_t *c, const cyd_scene_t *scene, const char *hhmm)
+{
+    int right = WIFI_X - 6;
+    int bw;
+    paint_bar(c);
+    aa_text(c, MARGIN, 2, 0, hhmm, c->white, 1);
+    paint_wifi(c, scene->net_state);
+    bw = badge_width(scene);
+    if (bw) {
+        draw_badge(c, scene, 96);
+    }
+    if (scene->status[0]) {
+        int tw = text_px(scene->status, 1);
+        int w = tw + 12;
+        int x = right - w;
+        int min_x = bw ? 96 + bw + 6 : 96;
+        if (x < min_x) {
+            x = min_x;
+        }
+        if (x + w <= right) {
+            fill_round(c, x, 4, w, 16, 8, c->lift);
+            text(c, x + 6, 8, 1, scene->status, status_col(c, scene->status));
+        }
+    }
+}
+
+static void paint_empty(canvas_t *c, const cyd_scene_t *scene)
+{
+    if (strcmp(scene->status, "sem hub") == 0) {
+        text_center(c, 108, 1, "configure o Home Assistant", c->muted);
+        text_center(c, 126, 1, "no celular (portal / Ajustes)", c->muted);
+    } else if (strcmp(scene->status, "offline") == 0 ||
+               strcmp(scene->status, "token ruim") == 0 ||
+               strcmp(scene->status, "sem token") == 0) {
+        text_center(c, 108, 1, "nao foi possivel ler o HA", c->muted);
+        text_center(c, 126, 1, "confira endereco e token", c->muted);
+    } else if (strcmp(scene->status, "HA ok") == 0) {
+        text_center(c, 108, 1, "nenhuma luz ou tomada no HA", c->muted);
+    } else if (strcmp(scene->status, "aguardando") == 0) {
+        text_center(c, 108, 1, "buscando dispositivos...", c->muted);
     } else {
-        memcpy(hhmm, "--:--", 6);
+        text_center(c, 108, 1, "erro ao ler o HA:", c->muted);
+        text_center(c, 126, 1, scene->status, c->muted);
     }
-    aa_center(c, 6, 1, hhmm, c->white);
-    if (scene->time_valid) {
-        char date[20];
-        date_line(scene, date, sizeof date);
-        text_center(c, 62, 1, date, c->muted);
+    if (scene->cat_on) {
+        kitten_act(c, 116, 146, 1, 2, scene);
     }
-    if (scene->place[0]) {
-        text_center(c, 74, 2, scene->place, c->warm);
+}
+
+static void paint_rows(canvas_t *c, const cyd_scene_t *scene)
+{
+    int n = scene->row_count;
+    int y = 90;
+    int row_h = 22;
+    int h;
+    int x = MARGIN;
+    int w = CYD_W - 2 * MARGIN;
+    if (n > CYD_ROW_MAX) {
+        n = CYD_ROW_MAX;
     }
-    weather_pair(c, 96, 96, 2, scene->temp_c, scene->humidity);
-    /* 2/3 of the web viewBox: about 107x93, same patches as the SVG. */
-    if (scene->cat_on) kitten_act(c, 106, 118, 2, 3, scene);
-    text_center(c, 224, 1, "toque na tela", c->muted);
-    wifi_icon(c, CYD_W - 36, 2, scene->net_state);
-    alert_badge(c, scene, 4);
-    alert_banner(c, scene);
+    h = 8 + n * row_h + 4;
+    if (y + h > 214) {
+        h = 214 - y;
+    }
+    fill_round(c, x, y, w, h, 8, c->card);
+    for (int i = 0; i < n; i++) {
+        const cyd_row_t *r = &scene->rows[i];
+        int ry = y + 8 + i * row_h;
+        uint16_t det = r->on == 1 ? c->ok : (r->on == 0 ? c->muted : c->cool);
+        uint16_t dot = r->on == 1 ? c->ok : (r->on == 0 ? c->faint : c->cool);
+        int dw = text_px(r->detail, 1);
+        fill_disc(c, x + 12, ry + 4, 3, dot);
+        text(c, x + 20, ry, 1, r->name, c->white);
+        text(c, x + w - dw - 10, ry, 1, r->detail, det);
+        if (i + 1 < n) {
+            fill_rect(c, x + 12, ry + 16, w - 24, 1, c->line);
+        }
+    }
 }
 
 static void paint_home(canvas_t *c, const cyd_scene_t *scene)
 {
     char hhmm[6];
-    if (scene->time_valid) {
-        hhmm[0] = (char)('0' + scene->hour / 10);
-        hhmm[1] = (char)('0' + scene->hour % 10);
-        hhmm[2] = ':';
-        hhmm[3] = (char)('0' + scene->minute / 10);
-        hhmm[4] = (char)('0' + scene->minute % 10);
-        hhmm[5] = '\0';
-    } else {
-        memcpy(hhmm, "--:--", 6);
-    }
-    aa_text(c, 8, 5, 0, hhmm, c->white, 1);
-    if (scene->status[0]) {
-        int sw = text_px(scene->status, 1);
-        text(c, CYD_W - sw - 8, 8, 1, scene->status, c->cool);
-    }
-
     const char *place = scene->place[0] ? scene->place : "Casa";
-    text(c, 8, 32, 2, place, c->warm);
+    int avail = CYD_CAMBTN_X - 8 - MARGIN;
+    int gap = 8;
+    int cw;
+    format_hhmm(scene, hhmm);
+    paint_home_bar(c, scene, hhmm);
 
-    if (scene->has_temp || scene->has_humidity) {
-        char left[8] = "--c";
-        char right[8] = "--%";
-        if (scene->has_temp) {
-            weather_text(left, right, scene->temp_c, scene->has_humidity ? scene->humidity : 0);
-            if (!scene->has_humidity) {
-                right[0] = '-';
-                right[1] = '-';
-                right[2] = '%';
-                right[3] = '\0';
-            }
-        } else if (scene->has_humidity) {
-            weather_text(left, right, 0, scene->humidity);
-            left[0] = '-';
-            left[1] = '-';
-            left[2] = 'c';
-            left[3] = '\0';
-        }
-        text(c, 8, 56, 2, left, c->warm);
-        text(c, 100, 56, 2, right, c->cool);
+    if (text_px(place, 2) <= CYD_CAMBTN_X - 16) {
+        text(c, MARGIN, 30, 2, place, c->white);
     } else {
-        text(c, 8, 56, 1, "clima indisponivel", c->muted);
+        text(c, MARGIN, 34, 1, place, c->white);
     }
 
-    fill_rect(c, 8, 80, CYD_W - 16, 1, c->muted);
+    cw = (avail - gap) / 2;
+    if (scene->has_temp || scene->has_humidity) {
+        char left[8];
+        char right[8];
+        home_weather(scene, left, right);
+        metric_card(c, MARGIN, 52, cw, 30, left, c->warm);
+        metric_card(c, MARGIN + cw + gap, 52, cw, 30, right, c->cool);
+    } else {
+        fill_round(c, MARGIN, 52, avail, 30, 8, c->card);
+        text(c, MARGIN + 12, 63, 1, "clima indisponivel", c->muted);
+    }
 
     if (scene->row_count <= 0) {
-        if (strcmp(scene->status, "sem hub") == 0) {
-            text_center(c, 110, 1, "configure o Home Assistant", c->muted);
-            text_center(c, 128, 1, "no celular (portal / Ajustes)", c->muted);
-        } else if (strcmp(scene->status, "offline") == 0 ||
-                   strcmp(scene->status, "token ruim") == 0 ||
-                   strcmp(scene->status, "sem token") == 0) {
-            text_center(c, 110, 1, "nao foi possivel ler o HA", c->muted);
-            text_center(c, 128, 1, "confira endereco e token", c->muted);
-        } else if (strcmp(scene->status, "HA ok") == 0) {
-            text_center(c, 110, 1, "nenhuma luz ou tomada no HA", c->muted);
-        } else if (strcmp(scene->status, "aguardando") == 0) {
-            text_center(c, 110, 1, "buscando dispositivos...", c->muted);
-        } else {
-            text_center(c, 110, 1, "erro ao ler o HA:", c->muted);
-            text_center(c, 128, 1, scene->status, c->muted);
-        }
-        if (scene->cat_on) kitten_act(c, 112, 148, 1, 2, scene);
+        paint_empty(c, scene);
     } else {
-        for (int i = 0; i < scene->row_count && i < CYD_ROW_MAX; i++) {
-            int y = 88 + i * 22;
-            const cyd_row_t *r = &scene->rows[i];
-            uint16_t name_c = c->white;
-            uint16_t det_c = c->muted;
-            if (r->on == 1) {
-                det_c = c->warm;
-            } else if (r->on == 0) {
-                det_c = c->muted;
-            } else {
-                det_c = c->cool;
-            }
-            text(c, 8, y, 1, r->name, name_c);
-            int dw = text_px(r->detail, 1);
-            text(c, CYD_W - dw - 8, y, 1, r->detail, det_c);
+        paint_rows(c, scene);
+        /* The banner covers this corner. Drawing the cat anyway leaves a
+         * few pixels sticking out under the rounded alert card. */
+        if (scene->cat_on && !scene->banner) {
+            kitten_act(c, 274, 204, 1, 4, scene);
         }
     }
 
-    text_center(c, 224, 1, "40 min sem toque: tela off", c->muted);
-    if (scene->row_count > 0) {
-        if (scene->cat_on) kitten_act(c, 268, 200, 1, 4, scene);
-    }
+    text_center(c, 222, 1, "40 min sem toque: tela off", c->muted);
     if (scene->cam_btn) {
         cam_button(c);
     }
-    alert_badge(c, scene, CYD_BADGE_X);
+    alert_banner(c, scene);
+}
+
+static void paint_saver_bar(canvas_t *c, const cyd_scene_t *scene)
+{
+    paint_bar(c);
+    if (scene->alert_count > 0) {
+        draw_badge(c, scene, MARGIN);
+    }
+    if (scene->time_valid) {
+        char date[20];
+        date_line(scene, date, sizeof date);
+        text_center(c, 8, 1, date, c->muted);
+    }
+    paint_wifi(c, scene->net_state);
+}
+
+static void paint_glance_card(canvas_t *c, const cyd_scene_t *scene)
+{
+    int x = 16;
+    int y = 86;
+    int w = CYD_W - 32;
+    int h = 40;
+    char left[8];
+    char right[8];
+    int lw;
+    int rw;
+    int gap = 14;
+    int pair;
+    int ty;
+    weather_text(left, right, scene->temp_c, scene->humidity);
+    lw = text_px(left, 2);
+    rw = text_px(right, 2);
+    pair = lw + gap + rw;
+    ty = y + (h - 16) / 2;
+    fill_round(c, x, y, w, h, 8, c->card);
+    if (scene->place[0]) {
+        int scale = 2;
+        int pw = text_px(scene->place, 2);
+        int room = w - 28 - pair;
+        int rx = x + w - 12 - pair;
+        if (pw > room) {
+            scale = 1;
+            pw = text_px(scene->place, 1);
+        }
+        text(c, x + 12, y + (h - 8 * scale) / 2, scale, scene->place, c->white);
+        if (x + 12 + pw + 8 < rx) {
+            fill_rect(c, rx - 8, y + 10, 1, h - 20, c->line);
+        }
+        text(c, rx, ty, 2, left, c->warm);
+        text(c, rx + lw + gap, ty, 2, right, c->cool);
+    } else {
+        int rx = x + (w - pair) / 2;
+        text(c, rx, ty, 2, left, c->warm);
+        text(c, rx + lw + gap, ty, 2, right, c->cool);
+    }
+}
+
+static void paint_saver(canvas_t *c, const cyd_scene_t *scene)
+{
+    char hhmm[6];
+    format_hhmm(scene, hhmm);
+    paint_saver_bar(c, scene);
+    aa_center(c, 32, 1, hhmm, c->white);
+    paint_glance_card(c, scene);
+    if (scene->cat_on) {
+        /* 2/3 of the web viewBox: about 107x93, same patches as the SVG. */
+        kitten_act(c, 106, 132, 2, 3, scene);
+    }
+    text_center(c, 226, 1, "toque na tela", c->muted);
     alert_banner(c, scene);
 }
 
@@ -965,15 +1211,24 @@ void cyd_scene_paint(uint16_t *band, int y0, int band_h, const cyd_scene_t *scen
         .band = band,
         .y0 = y0,
         .bh = band_h,
-        .bg = rgb565(11, 18, 32),
+        .bg = rgb565(10, 14, 24),
+        .bar = rgb565(18, 26, 42),
+        .card = rgb565(26, 36, 58),
+        .lift = rgb565(36, 48, 74),
+        .line = rgb565(46, 60, 88),
         .cream = rgb565(246, 241, 232),
         .orange = rgb565(239, 138, 54),
         .black = rgb565(42, 36, 31),
         .pink = rgb565(243, 166, 184),
-        .white = rgb565(248, 250, 252),
-        .warm = rgb565(253, 186, 116),
-        .cool = rgb565(125, 211, 252),
-        .muted = rgb565(182, 196, 214),
+        .white = rgb565(244, 247, 251),
+        .warm = rgb565(242, 176, 108),
+        .cool = rgb565(126, 198, 228),
+        .muted = rgb565(154, 168, 190),
+        .faint = rgb565(96, 110, 132),
+        .ok = rgb565(52, 199, 142),
+        .warn = rgb565(232, 164, 74),
+        .crit = rgb565(224, 92, 92),
+        .info = rgb565(96, 148, 232),
     };
     if (scene->mode == CYD_UI_SLEEP) {
         paint_sleep(&c);
@@ -985,7 +1240,7 @@ void cyd_scene_paint(uint16_t *band, int y0, int band_h, const cyd_scene_t *scen
         return;
     }
     if (scene->mode == CYD_UI_PORTAL) {
-        paint_portal(&c);
+        paint_portal(&c, scene);
     } else if (scene->mode == CYD_UI_SAVER) {
         paint_saver(&c, scene);
     } else if (scene->mode == CYD_UI_ALERTS) {
@@ -994,3 +1249,4 @@ void cyd_scene_paint(uint16_t *band, int y0, int band_h, const cyd_scene_t *scen
         paint_home(&c, scene);
     }
 }
+
