@@ -1,6 +1,7 @@
 # esp32
 
-Firmware ESP-IDF para o **Cheap Yellow Display 2.8"** (ESP32-2432S028) e um
+Firmware ESP-IDF para o **Cheap Yellow Display 2.8"** (ESP32-2432S028, a
+placa de 1 USB com ILI9341 e a de 2 USB com ST7789 ou ILI9342) e um
 portal Wi-Fi. No boot o aparelho entra na rede salva na NVS; sem credenciais
 (ou se a conexão falha), sobe o portal `ESP32-Setup`. Com o Home Assistant na
 LAN, o painel mostra relógio, clima, dispositivos, câmera e alertas.
@@ -44,7 +45,9 @@ flash.bat COM3
   ícone de internet), cartões arredondados para clima, dispositivos e alertas,
   botão **Porta** no mesmo canto. Faixas que não mudaram não são reenviadas
   ao painel, para o gato não piscar a tela inteira.
-- Inversão de cor **desligada** por padrão; ordem BGR opcional (vale depois de reiniciar).
+- Inversão de cor **desligada** por padrão no ILI9341 e no ST7789; ordem BGR
+  opcional (vale depois de reiniciar). O controlador (automático, ILI9341,
+  ST7789, ILI9342) fica na NVS e na seção **Tela do CYD**.
 - Ajustes da tela na NVS e na seção **Tela do CYD** (`GET`/`POST /config`).
   Inversão e brilho gravados por `POST /config` ou `POST /display` entram na
   próxima passagem da tarefa da tela (`display_task`). O servidor HTTP não
@@ -125,8 +128,10 @@ Servidor em [`main/http_server.c`](main/http_server.c), porta **80**:
 - `GET /config`, `POST /config` — ajustes da tela (NVS `app_cfg`). O que mexe
   no painel (inversão, brilho) só é aplicado na próxima passagem de `display_task`.
 - `POST /camera` — abre o visor de snapshot (exige a chave do aparelho)
-- `POST /display` — inversão, BGR e padrão de teste (exige a chave). A inversão
-  entra na próxima passagem de `display_task`; BGR só depois de reiniciar.
+- `POST /display` — inversão, BGR, controlador (`panel` = 0 automático, 1
+  ILI9341, 2 ST7789, 3 ILI9342) e padrão de teste (exige a chave). A inversão
+  entra na próxima passagem de `display_task`; BGR e o controlador só depois
+  de reiniciar. `GET /config` também devolve `panel_on` e `panel_id`.
 - `POST /alert`, `GET /alerts` — alertas do HA (POST exige a chave)
 - `GET /touch` — última leitura do XPT2046, mais `uptime_s`, `disp_age_ms`
   (ms desde a última volta de `display_task`, ou `-1`), `reset`

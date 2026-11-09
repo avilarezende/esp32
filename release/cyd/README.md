@@ -1,7 +1,9 @@
 # Pacote pronto — CYD 2.8"
 
-Binários do firmware com painel ILI9341, portal Wi-Fi, Home Assistant, câmera,
-alertas e OTA. Gerados com ESP-IDF **5.3.2** (`scripts/pack-release-cyd.sh` ou
+Binários do firmware da CYD 2.8" (ILI9341 na placa de 1 USB, ST7789 ou
+ILI9342 na de 2 USB), portal Wi-Fi, Home Assistant, câmera, alertas e OTA.
+Um só `esp32-ota.bin` serve as duas; o controlador se escolhe na página do
+aparelho. Gerados com ESP-IDF **5.3.2** (`scripts/pack-release-cyd.sh` ou
 o artefato `release` do GitHub Actions).
 
 ## Qual arquivo usar

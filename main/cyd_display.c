@@ -28,6 +28,7 @@
 #include "cyd_camera.h"
 #include "nvs.h"
 #include "cyd_cfg.h"
+#include "cyd_panel.h"
 #include "driver/ledc.h"
 #include "esp_random.h"
 #include "esp_system.h"
@@ -40,7 +41,9 @@
 
 static const char *TAG = "cyd";
 
-/* ESP32-2432S028 (Cheap Yellow Display, 2.8"). Same pins as TFT_eSPI's CYD setup. */
+/* ESP32-2432S028 (Cheap Yellow Display, 2.8"), both USB variants. The 1-USB
+ * board is an ILI9341. The 2-USB board is usually an ST7789 (sometimes an
+ * ILI9342). Pins match TFT_eSPI's CYD and CYD2USB setups. */
 #define PIN_LCD_SCLK 14
 #define PIN_LCD_MOSI 13
 #define PIN_LCD_MISO 12 /* ILI9341 SDO; input, so it does not change the GPIO12 strap at reset */
@@ -410,6 +413,74 @@ void cyd_lcd_drain(void)
     }
 }
 
+/* ST7789_DRIVER sequence from TFT_eSPI (the one CYD2USB/User_Setup.h selects),
+ * minus MADCTL: the panel driver writes that from `bgr`, then swap/mirror.
+ * LCMCTRL 0x0C is XMX|XMH. XMX flips the MX bit, so ST7789 rotation 1
+ * (MX|MV|BGR) lands on the same MV|BGR the ILI9341 path already uses and
+ * the XPT2046 calibration expects. XMH only affects an RGB interface.
+ * RAMCTRL 0x00,0xE0 is what makes 16-bit SPI pixels RGB565; without it the
+ * picture is scrambled. The ILI9341 vendor command 0xC0=0x23 is this same
+ * LCMCTRL on an ST7789 and sets XMV, which is the scrambled 2-USB glass. */
+static const uint8_t s_st_b6[] = {0x0A, 0x82};
+static const uint8_t s_st_ram[] = {0x00, 0xE0};
+static const uint8_t s_st_col[] = {0x55};
+static const uint8_t s_st_por[] = {0x0C, 0x0C, 0x00, 0x33, 0x33};
+static const uint8_t s_st_gctrl[] = {0x35};
+static const uint8_t s_st_vcom[] = {0x28};
+static const uint8_t s_st_lcm[] = {0x0C};
+static const uint8_t s_st_vdv[] = {0x01, 0xFF};
+static const uint8_t s_st_vrh[] = {0x10};
+static const uint8_t s_st_vdvs[] = {0x20};
+static const uint8_t s_st_fr[] = {0x0F};
+static const uint8_t s_st_pwr[] = {0xA4, 0xA1};
+static const uint8_t s_st_pgam[] = {
+    0xD0, 0x00, 0x02, 0x07, 0x0A, 0x28, 0x32, 0x44, 0x42, 0x06, 0x0E, 0x12, 0x14, 0x17,
+};
+static const uint8_t s_st_ngam[] = {
+    0xD0, 0x00, 0x02, 0x07, 0x0A, 0x28, 0x31, 0x54, 0x47, 0x0E, 0x1C, 0x17, 0x1B, 0x1E,
+};
+static const ili9341_lcd_init_cmd_t s_st7789_init[] = {
+    {LCD_CMD_NORON, NULL, 0, 0},
+    {0xB6, s_st_b6, sizeof s_st_b6, 0},
+    {0xB0, s_st_ram, sizeof s_st_ram, 0},
+    {LCD_CMD_COLMOD, s_st_col, sizeof s_st_col, 10},
+    {0xB2, s_st_por, sizeof s_st_por, 0},
+    {0xB7, s_st_gctrl, sizeof s_st_gctrl, 0},
+    {0xBB, s_st_vcom, sizeof s_st_vcom, 0},
+    {0xC0, s_st_lcm, sizeof s_st_lcm, 0},
+    {0xC2, s_st_vdv, sizeof s_st_vdv, 0},
+    {0xC3, s_st_vrh, sizeof s_st_vrh, 0},
+    {0xC4, s_st_vdvs, sizeof s_st_vdvs, 0},
+    {0xC6, s_st_fr, sizeof s_st_fr, 0},
+    {0xD0, s_st_pwr, sizeof s_st_pwr, 0},
+    {0xE0, s_st_pgam, sizeof s_st_pgam, 0},
+    {0xE1, s_st_ngam, sizeof s_st_ngam, 0},
+    {LCD_CMD_INVON, NULL, 0, 0},
+};
+static const ili9341_vendor_config_t s_st7789_vendor = {
+    .init_cmds = s_st7789_init,
+    .init_cmds_size = sizeof s_st7789_init / sizeof s_st7789_init[0],
+};
+
+/* RDDID / Read-ID4. A miss (MISO idle, unknown id) stays on ILI9341. */
+static void panel_probe(esp_lcd_panel_io_handle_t io, uint8_t id04[4], uint8_t idd3[4])
+{
+    memset(id04, 0, 4);
+    memset(idd3, 0, 4);
+    if (esp_lcd_panel_io_tx_param(io, LCD_CMD_SWRESET, NULL, 0) != ESP_OK) {
+        return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(120));
+    if (esp_lcd_panel_io_tx_param(io, LCD_CMD_SLPOUT, NULL, 0) != ESP_OK) {
+        return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(120));
+    /* Four clocks: one dummy plus the 24-bit id. Longer reads walk off the
+     * parameter and can leave the controller mid-byte. */
+    esp_lcd_panel_io_rx_param(io, LCD_CMD_RDDID, id04, 4);
+    esp_lcd_panel_io_rx_param(io, 0xD3, idd3, 4); /* ILI9341 Read ID4 */
+}
+
 static esp_err_t panel_bringup(void)
 {
     gpio_config_t bl = {
@@ -457,6 +528,22 @@ static esp_err_t panel_bringup(void)
     }
     s_lcd_io = io;
 
+    uint8_t id04[4], idd3[4];
+    uint32_t chip = 0;
+    panel_probe(io, id04, idd3);
+    int detected = cyd_panel_from_ids(id04, 4, idd3, 4, &chip);
+    int resolved = cyd_panel_resolve(cyd_cfg()->panel, detected);
+    char idhex[16];
+    if (chip) {
+        snprintf(idhex, sizeof idhex, "%lx", (unsigned long)chip);
+    } else {
+        snprintf(idhex, sizeof idhex, "%02x%02x%02x%02x", id04[0], id04[1], id04[2], id04[3]);
+    }
+    cyd_cfg_note_panel(resolved, idhex);
+    ESP_LOGI(TAG, "panel id 04:%02x%02x%02x%02x d3:%02x%02x%02x%02x -> %s (saved %s)",
+             id04[0], id04[1], id04[2], id04[3], idd3[0], idd3[1], idd3[2], idd3[3],
+             cyd_panel_name(resolved), cyd_panel_name(cyd_cfg()->panel));
+
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = -1,
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
@@ -466,9 +553,12 @@ static esp_err_t panel_bringup(void)
 #endif
         .bits_per_pixel = 16,
     };
+    if (resolved == CYD_PANEL_ST7789) {
+        panel_cfg.vendor_config = (void *)&s_st7789_vendor;
+    }
     err = esp_lcd_new_panel_ili9341(io, &panel_cfg, &s_panel);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "ili9341 create failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "panel create failed: %s", esp_err_to_name(err));
         return err;
     }
     err = esp_lcd_panel_reset(s_panel);
@@ -476,20 +566,22 @@ static esp_err_t panel_bringup(void)
         err = esp_lcd_panel_init(s_panel);
     }
     if (err == ESP_OK) {
-        /* Landscape, same MADCTL as TFT_eSPI rotation 1 on this board. */
+        /* Landscape. ILI9341 / ILI9342: TFT_eSPI rotation 1 is MV|BGR
+         * (swap, no mirror). ST7789 rotation 1 writes MX|MV|BGR; LCMCTRL
+         * 0x0C XORs MX away, so the glass matches the other two. */
         err = esp_lcd_panel_swap_xy(s_panel, true);
     }
     if (err == ESP_OK) {
-        err = esp_lcd_panel_mirror(s_panel, false, false);
+        err = esp_lcd_panel_mirror(s_panel, resolved == CYD_PANEL_ST7789, false);
     }
     if (err == ESP_OK) {
-        err = esp_lcd_panel_invert_color(s_panel, cyd_cfg()->inv != 0);
+        err = esp_lcd_panel_invert_color(s_panel, cyd_cfg_inv_effective() != 0);
     }
     if (err == ESP_OK) {
         err = esp_lcd_panel_disp_on_off(s_panel, true);
     }
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "ili9341 init failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "panel init failed: %s", esp_err_to_name(err));
         return err;
     }
 
@@ -523,7 +615,8 @@ static esp_err_t panel_bringup(void)
     gpio_config(&irq);
 
     bl_set(1);
-    ESP_LOGI(TAG, "CYD panel ready (320x240)");
+    ESP_LOGI(TAG, "CYD panel ready (%s, 320x240, inv %d, bgr %u)",
+             cyd_panel_name(resolved), cyd_cfg_inv_effective(), cyd_cfg()->bgr);
     return ESP_OK;
 }
 
@@ -629,7 +722,7 @@ static void apply_pending(void)
     }
     if (s_cfg_pending) {
         s_cfg_pending = 0;
-        if (s_panel) esp_lcd_panel_invert_color(s_panel, cyd_cfg()->inv != 0);
+        if (s_panel) esp_lcd_panel_invert_color(s_panel, cyd_cfg_inv_effective() != 0);
         if (s_screen_on) bl_set(1);
     }
 }
@@ -687,7 +780,7 @@ static void shot_drain(void)
 
 static void store_px(uint16_t *dst, uint16_t c)
 {
-    if (cyd_cfg()->inv) {
+    if (cyd_cfg_inv_effective()) {
         c ^= 0xFFFF; /* INVON flips the glass, not the GRAM */
     }
     *dst = c;

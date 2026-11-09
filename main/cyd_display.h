@@ -12,7 +12,8 @@ esp_err_t cyd_display_start(void);
 void cyd_display_show_camera(const char *entity, int seconds);
 
 /* Panel colour options, saved in NVS. invert and brightness are applied on
- * the next display_task pass (not from the HTTP task); bgr needs a reboot.
+ * the next display_task pass (not from the HTTP task); bgr and the panel
+ * driver (ILI9341 / ST7789 / ILI9342) need a reboot.
  * test=1 shows colour bars (red, green, blue, white, black) for 15 s. */
 void cyd_display_set_color(int invert, int bgr, int test);
 
