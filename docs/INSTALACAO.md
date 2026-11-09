@@ -6,8 +6,12 @@ partições) e **OTA** para as próximas versões.
 
 ## Hardware
 
-- Cheap Yellow Display **2.8"** (ESP32-2432S028), USB-C ou micro-USB de **dados**
-- Cabo curto e de boa qualidade (cabos só de carga falham no flash)
+- Cheap Yellow Display **2.8"** (ESP32-2432S028), micro-USB de **dados**
+- A mesma imagem também cobre a variante **2 USB** (micro-USB + USB-C). O
+  controlador muda; a escolha está em [Qual placa](#qual-placa-1-usb-ou-2-usb)
+- Cabo curto e de boa qualidade (cabos só de carga falham no flash). No USB-C
+  desta placa, cabo USB-C para USB-C não enumera: falta o resistor das linhas
+  CC. Use USB-C para USB-A, ou um adaptador
 - Computador com ESP-IDF **5.3.2** (ou o `esptool` via pip) e o driver serial
   (CH340 ou CP210x)
 
@@ -168,6 +172,44 @@ pelo `/ota` falha: aquilo é a flash inteira, não uma imagem de app.
 O pacote do HA (campainha e alertas) está em
 [homeassistant/cyd.yaml](homeassistant/cyd.yaml) e no [GUIA.md](GUIA.md).
 
+## Qual placa: 1 USB ou 2 USB
+
+As duas placas compartilham o mesmo firmware, o mesmo `firmware-cyd.bin` e o
+mesmo `esp32-ota.bin`. O `POST /ota` que já está na placa aceita o app novo:
+a tabela de partições não mudou. Quem gravou a imagem anterior por USB na
+placa 2 USB atualiza sem cabo.
+
+O painel da **1 USB** é o ILI9341. É o padrão e não muda: inversão desligada
+(`inv=0`), ordem BGR ligada (`bgr=1`).
+
+A **2 USB** quase sempre traz um ST7789 de 240×320. Com o init do ILI9341 a
+imagem fica embaralhada (o comando `0xC0=0x23` cai no `LCMCTRL` do ST7789 e
+o bit XMV desfaz o eixo do paisagem) e com as cores negativas. Algumas
+levas usam ILI9342: a geometria com o driver ILI9341 já está certa e só a
+cor precisa de inversão.
+
+Em **Ajustes → Tela do CYD → Controlador do painel** (também `panel` em
+`POST /config` ou `POST /display?key=…&panel=`):
+
+| Valor | Nome | Quando |
+|-------|------|--------|
+| `0` | Automático | Padrão. Lê o ID no MISO (GPIO 12): `858552` vira ST7789, `9342` vira ILI9342. Qualquer outra leitura, inclusive falha, permanece ILI9341 |
+| `1` | ILI9341 | Placa de 1 USB, ou para forçar o comportamento antigo |
+| `2` | ST7789 | Placa 2 USB com imagem embaralhada. É o valor desta leva |
+| `3` | ILI9342 | Placa 2 USB em que a imagem está alinhada e só as cores estão negativas |
+
+Trocar o valor reinicia a placa. Toque, rotação e o resto do firmware
+continuam iguais. BGR continua `1`. A inversão do ST7789 segue o
+`User_Setup` do CYD2USB: desligada. Se a geometria endireitar e o preto
+ainda sair branco, marque **Inverter cores** (não precisa de outro `.bin`).
+No ILI9342, sem um `inv` já gravado, a inversão liga sozinha.
+
+O `GET /config` devolve `panel` (o que está salvo), `panel_on` (o driver
+que subiu) e `panel_id` (o ID reconhecido, ou os 4 bytes crus do `RDDID`
+quando nenhum ID bate). No automático, `panel` fica `0` e `panel_on` mostra
+o que foi detectado. Se `panel_on` continuar `1` e `panel_id` não for
+`858552`, escolha **2** e salve.
+
 ## Problemas comuns
 
 | Sintoma | O que fazer |
@@ -179,6 +221,8 @@ O pacote do HA (campainha e alertas) está em
 | `sem hub` no painel | Configurar o HA no app (token no campo senha) |
 | `token ruim` / `offline` | Conferir `http://IP` (porta 80) ou `:8123`, o token, e se os dois estão na mesma LAN |
 | Token “não cola” | O campo aceita 319 caracteres; tokens cortados em 63 são de um firmware anterior |
-| Cores invertidas | Em **Tela do CYD**, deixar **Inverter cores** desmarcado |
+| Cores invertidas na 1 USB | Em **Tela do CYD**, deixar **Inverter cores** desmarcado |
+| Imagem embaralhada na 2 USB | Controlador **ST7789** (valor `2`), ou automático se `panel_id` for `858552`. Ver [Qual placa](#qual-placa-1-usb-ou-2-usb) |
+| 2 USB alinhada, mas negativa | Controlador **ILI9342** (valor `3`), que liga a inversão |
 | Tela preta na 3.5" | Esta imagem é só para a CYD **2.8"** |
 | `{"ok":false,"error":"key"}` | A chave não é o token: são 16 hex do SHA-256 dele |

@@ -19,6 +19,14 @@ e da observação do Home Assistant. Testado na placa pelo autor da série.
 
 ### Painel
 
+- O mesmo firmware cobre a CYD de 1 USB (ILI9341) e a de 2 USB (ST7789, e
+  ILI9342 quando a geometria já está certa). A escolha fica na NVS (`c_panel`,
+  0 automático, 1 ILI9341, 2 ST7789, 3 ILI9342), na seção **Tela do CYD** e
+  em `POST /display`. O automático só sai do ILI9341 se o ID lido no MISO for
+  `858552` ou `9342`. A placa antiga, sem essa chave, continua no init
+  ILI9341 com `inv=0` e `bgr=1`. Trocar o controlador reinicia a placa. O
+  `POST /ota` existente aceita o app novo.
+
 - Tema escuro único no portal, na observação, no protetor e nos alertas:
   barra de status de 24 px, cartões arredondados, temperatura em âmbar,
   umidade em azul, ligado em verde. O gato calico, os textos em pt-BR e os

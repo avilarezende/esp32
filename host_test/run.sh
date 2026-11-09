@@ -56,6 +56,16 @@ gcc -std=c11 -Wall -Wextra \
 "$HERE/build/cyd_net_test"
 
 gcc -std=c11 -Wall -Wextra \
+    -I "$UNITY" \
+    -I "$HERE/../main" \
+    "$HERE/test_cyd_panel.c" \
+    "$HERE/../main/cyd_panel.c" \
+    "$UNITY/unity.c" \
+    -o "$HERE/build/cyd_panel_test"
+
+"$HERE/build/cyd_panel_test"
+
+gcc -std=c11 -Wall -Wextra \
     -I "$HERE/../main" \
     "$HERE/render_ui.c" \
     "$HERE/../main/cyd_scene.c" \

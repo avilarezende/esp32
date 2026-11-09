@@ -3,6 +3,7 @@
 #include "cyd_bmp.h"
 #include "ha_client.h"
 #include "cyd_cfg.h"
+#include "cyd_panel.h"
 #include "esp_ota_ops.h"
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
@@ -239,8 +240,10 @@ static esp_err_t camera_post_handler(httpd_req_t *req)
     return httpd_resp_sendstr(req, "{\"ok\":true}");
 }
 
-/* POST /display?key=..&invert=0|1&bgr=0|1&test=1
- * invert is applied on the next display_task pass; bgr after reboot. */
+static void reboot_soon(void *arg);
+
+/* POST /display?key=..&invert=0|1&bgr=0|1&panel=0..3&test=1
+ * invert is applied on the next display_task pass; bgr and panel after reboot. */
 static esp_err_t display_post_handler(httpd_req_t *req)
 {
     char body[POST_BODY_MAXLEN] = {0};
@@ -250,12 +253,24 @@ static esp_err_t display_post_handler(httpd_req_t *req)
         httpd_resp_set_status(req, "403 Forbidden");
         return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"key\"}");
     }
-    char inv[4], bgr[4], test[4];
+    char inv[4], bgr[4], test[4], panel[4];
+    int panel_before = cyd_cfg()->panel;
     get_param(req, body, "invert", inv, sizeof inv);
     get_param(req, body, "bgr", bgr, sizeof bgr);
     get_param(req, body, "test", test, sizeof test);
+    get_param(req, body, "panel", panel, sizeof panel);
     cyd_display_set_color(inv[0] ? atoi(inv) : -1, bgr[0] ? atoi(bgr) : -1, test[0] == '1');
-    return httpd_resp_sendstr(req, "{\"ok\":true}");
+    if (panel[0]) {
+        int v = atoi(panel);
+        if (v < CYD_PANEL_AUTO) v = CYD_PANEL_AUTO;
+        if (v > CYD_PANEL_ILI9342) v = CYD_PANEL_ILI9342;
+        cyd_cfg_set_u8("c_panel", (uint8_t)v);
+    }
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    if (cyd_cfg()->panel != panel_before) {
+        xTaskCreate(reboot_soon, "rb", 2048, NULL, 5, NULL);
+    }
+    return ESP_OK;
 }
 
 
@@ -295,14 +310,19 @@ static esp_err_t touch_get_handler(httpd_req_t *req) { return send_json(req, tou
 static esp_err_t alerts_get_handler(httpd_req_t *req) { return send_json(req, alerts_json_fn, 1200); }
 
 /* ---- Settings (same LAN trust as /hub) ---- */
-static esp_err_t config_get_handler(httpd_req_t *req) { return send_json(req, cyd_cfg_json, 1024); }
+static esp_err_t config_get_handler(httpd_req_t *req) { return send_json(req, cyd_cfg_json, 1536); }
 static esp_err_t config_post_handler(httpd_req_t *req)
 {
     char body[POST_BODY_MAXLEN] = {0};
     if (read_body(req, body, sizeof(body)) < 0) return ESP_FAIL;
+    int panel_before = cyd_cfg()->panel;
     cyd_cfg_set_form(body);
     cyd_display_apply_cfg();
-    return send_json(req, cyd_cfg_json, 1024);
+    esp_err_t err = send_json(req, cyd_cfg_json, 1536);
+    if (cyd_cfg()->panel != panel_before) {
+        xTaskCreate(reboot_soon, "rb", 2048, NULL, 5, NULL);
+    }
+    return err;
 }
 
 /* ---- OTA: POST /ota?key=.. with the raw esp32.bin, or ?url=http://.../esp32.bin ---- */

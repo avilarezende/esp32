@@ -9,11 +9,13 @@ Firmware para **ESP32** (ESP-IDF 5.3.2) que:
 
 1. Entra na rede Wi-Fi salva ou sobe o portal `ESP32-Setup` no primeiro uso.
 2. Serve um app web no celular (chat, Casa, Ajustes, **Tela do CYD**, OTA).
-3. No **CYD 2.8"** (ESP32-2432S028, ILI9341 + XPT2046) desenha relógio, clima,
-   dispositivos, câmera e alertas.
+3. No **CYD 2.8"** (ESP32-2432S028, ILI9341 ou ST7789/ILI9342 + XPT2046)
+   desenha relógio, clima, dispositivos, câmera e alertas.
 
-Placa alvo do painel: **só a amarela de 2.8"**. A de 3.5" usa outro controlador
-e não acende com esta imagem.
+Placa alvo do painel: **a amarela de 2.8"**, a de um micro-USB e a de dois
+USB (micro-USB + USB-C). A de 3.5" usa outro controlador e não acende com
+esta imagem. A escolha do controlador está em
+[INSTALACAO.md](INSTALACAO.md#qual-placa-1-usb-ou-2-usb).
 
 ## Telas do painel
 
@@ -185,8 +187,10 @@ Acentos saem dobrados para ASCII na fonte do painel (`ã` vira `a`).
 
 ### Cores
 
-A inversão do painel vem **desligada** (`inv=0`), que é o certo para esta
-placa. A ordem **BGR** vem ligada. `POST /config` e `POST /display` só gravam
+A inversão do painel vem **desligada** (`inv=0`) no ILI9341 e no ST7789, que
+é o certo para a placa de 1 USB e para o `User_Setup` CYD2USB. A ordem
+**BGR** vem ligada. O ILI9342, quando escolhido e ainda sem `disp_inv` na
+NVS, liga a inversão. `POST /config` e `POST /display` só gravam
 o ajuste e levantam um pedido: inversão e brilho entram na **próxima passagem**
 da tarefa da tela (`display_task`). O servidor HTTP não chama
 `esp_lcd_panel_invert_color()` nem o controle da backlight — fazer isso no
@@ -207,7 +211,8 @@ O mesmo aparelho serve a interface no navegador, na porta **80**:
 - **Casa** lista as mesmas linhas do painel.
 - **Ajustes → Tela do CYD** grava em `GET /config` e `POST /config`: entidades,
   ração, câmeras, rótulo e ícone do botão, duração da campainha, intervalo do
-  snapshot, brilho (5–100%), inverter cores, BGR, segundos até o descanso,
+  snapshot, brilho (5–100%), controlador do painel (ILI9341, ST7789 ou
+  ILI9342), inverter cores, BGR, segundos até o descanso,
   gato, relógio 24 h, alertas e a URL salva em `net_url`. Essa URL não pinta
   o globo; a sonda usa a lista fixa descrita em [Protetor de tela](#protetor-de-tela).
 - **Atualizar firmware** envia `esp32-ota.bin` (ou uma URL) com a chave do
