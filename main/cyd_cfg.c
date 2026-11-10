@@ -1,4 +1,6 @@
 #include "cyd_cfg.h"
+#include "cyd_panel.h"
+#include "cyd_ble.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,6 +9,9 @@
 
 static cyd_cfg_t s_cfg;
 static int s_loaded;
+static int s_inv_set;
+static int s_panel_on;
+static char s_panel_id[16];
 
 #define DEF_ENTS "switch.carros_switch_1=Garagem 1,switch.carros_switch_2=Garagem 2,switch.casa_aracaju_piscina=Piscina,switch.casa_ewelink_poco=Poco"
 #define DEF_NET  "http://connectivitycheck.gstatic.com/generate_204"
@@ -20,6 +25,14 @@ static uint8_t gu8(nvs_handle_t h, const char *k, uint8_t def)
 {
     uint8_t v = def;
     if (h) nvs_get_u8(h, k, &v);
+    return v;
+}
+static uint8_t gu8_found(nvs_handle_t h, const char *k, uint8_t def, int *found)
+{
+    uint8_t v = def;
+    esp_err_t err = (h) ? nvs_get_u8(h, k, &v) : ESP_ERR_NVS_NOT_FOUND;
+    if (found) *found = (err == ESP_OK);
+    if (err != ESP_OK) v = def;
     return v;
 }
 static uint16_t gu16(nvs_handle_t h, const char *k, uint16_t def)
@@ -43,10 +56,21 @@ void cyd_cfg_load(void)
     gstr(h, "c_cquick", n.cam_quick, sizeof n.cam_quick, "camera.frigate_frente_direita");
     n.bell_secs = gu8(h, "c_bsecs", 20);
     n.cam_ms = gu16(h, "c_camms", 1000);
-    n.inv = gu8(h, "disp_inv", 0);   /* v4: Rodrigo's panel needs no inversion */
+    int inv_set = 0;
+    n.inv = gu8_found(h, "disp_inv", 0, &inv_set);   /* v4: the 1-USB panel needs no inversion */
     n.bgr = gu8(h, "disp_bgr", 1);
+    n.panel = gu8(h, "c_panel", CYD_PANEL_AUTO);
+    if (n.panel > CYD_PANEL_ILI9342) n.panel = CYD_PANEL_AUTO;
     n.bright = gu8(h, "c_bright", 100);
-    n.saver_s = gu16(h, "c_saver", 30);
+    n.saver_s = gu16(h, "c_saver", 120);
+    n.day_start = gu8(h, "c_day0", 6);
+    n.day_end = gu8(h, "c_day1", 21);
+    if (n.day_start > 23) n.day_start = 6;
+    if (n.day_end > 23) n.day_end = 21;
+    if (n.day_start >= n.day_end) {
+        n.day_start = 6;
+        n.day_end = 21;
+    }
     n.cat = gu8(h, "c_cat", 1);
     n.clk24 = gu8(h, "c_clk24", 1);
     n.alerts = gu8(h, "c_alerts", 1);
@@ -55,6 +79,7 @@ void cyd_cfg_load(void)
     gstr(h, "c_net", n.net_url, sizeof n.net_url, DEF_NET);
     if (h) nvs_close(h);
     memcpy(&s_cfg, &n, sizeof s_cfg);
+    s_inv_set = inv_set;
     s_loaded = 1;
 }
 
@@ -90,8 +115,9 @@ void cyd_cfg_set_form(const char *body)
     }
     struct { const char *f, *k; int lo, hi; } u8s[] = {
         {"pets", "c_pets", 0, 1}, {"bell_secs", "c_bsecs", 3, 120}, {"inv", "disp_inv", 0, 1},
-        {"bgr", "disp_bgr", 0, 1}, {"bright", "c_bright", 5, 100}, {"cat", "c_cat", 0, 1},
+        {"bgr", "disp_bgr", 0, 1}, {"panel", "c_panel", 0, 3}, {"bright", "c_bright", 5, 100}, {"cat", "c_cat", 0, 1},
         {"clk24", "c_clk24", 0, 1}, {"alerts", "c_alerts", 0, 1}, {"btn_icon", "c_bicon", 0, 1},
+        {"day_start", "c_day0", 0, 23}, {"day_end", "c_day1", 0, 23},
     };
     for (size_t i = 0; i < sizeof u8s / sizeof u8s[0]; i++) {
         if (wifi_form_get_field(body, u8s[i].f, v, sizeof v) && v[0])
@@ -115,8 +141,37 @@ void cyd_cfg_json(char *buf, size_t len)
     wifi_form_json_escape(c->net_url, n, sizeof n);
     snprintf(buf, len,
              "{\"ents\":\"%s\",\"pets\":%u,\"cam_bell\":\"%s\",\"cam_quick\":\"%s\",\"bell_secs\":%u,"
-             "\"cam_ms\":%u,\"inv\":%u,\"bgr\":%u,\"bright\":%u,\"saver_s\":%u,\"cat\":%u,\"clk24\":%u,"
-             "\"alerts\":%u,\"net_url\":\"%s\",\"btn_label\":\"%s\",\"btn_icon\":%u}",
-             e, c->pets, b, q, c->bell_secs, c->cam_ms, c->inv, c->bgr, c->bright, c->saver_s,
-             c->cat, c->clk24, c->alerts, n, l, c->btn_icon);
+             "\"cam_ms\":%u,\"inv\":%u,\"bgr\":%u,\"bright\":%u,\"saver_s\":%u,\"day_start\":%u,\"day_end\":%u,"
+             "\"cat\":%u,\"clk24\":%u,"
+             "\"alerts\":%u,\"net_url\":\"%s\",\"btn_label\":\"%s\",\"btn_icon\":%u,"
+             "\"panel\":%u,\"panel_on\":%u,\"panel_id\":\"%s\",\"ble_paused\":%s}",
+             e, c->pets, b, q, c->bell_secs, c->cam_ms, (unsigned)cyd_cfg_inv_effective(), c->bgr,
+             c->bright, c->saver_s, c->day_start, c->day_end, c->cat, c->clk24, c->alerts, n, l, c->btn_icon,
+             c->panel, (unsigned)s_panel_on, s_panel_id,
+             cyd_ble_is_paused() ? "true" : "false");
+}
+
+void cyd_cfg_note_panel(int resolved, const char *id_hex)
+{
+    s_panel_on = resolved;
+    snprintf(s_panel_id, sizeof s_panel_id, "%s", id_hex ? id_hex : "");
+}
+
+int cyd_cfg_panel_on(void)
+{
+    return s_panel_on;
+}
+
+const char *cyd_cfg_panel_id(void)
+{
+    return s_panel_id;
+}
+
+int cyd_cfg_inv_effective(void)
+{
+    const cyd_cfg_t *c = cyd_cfg();
+    if (s_inv_set) return c->inv ? 1 : 0;
+    int p = (c->panel == CYD_PANEL_AUTO) ? s_panel_on : (int)c->panel;
+    if (p == CYD_PANEL_ILI9342) return 1;
+    return 0;
 }

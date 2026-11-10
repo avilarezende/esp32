@@ -21,6 +21,7 @@
 #include "esp_system.h"
 #include "nvs_flash.h"
 
+#include "cyd_ble.h"
 #include "cyd_display.h"
 #include "wifi_manager.h"
 
@@ -49,6 +50,17 @@ static void print_chip_info(void)
     printf("Free heap: %" PRIu32 " bytes\n", esp_get_free_heap_size());
 }
 
+/* Let Wi-Fi associate first; BLE shares the radio with a short scan window. */
+static void ble_later(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(10000));
+    if (cyd_ble_start() != ESP_OK) {
+        ESP_LOGW(TAG, "BLE scanner did not start; panel and Wi-Fi continue");
+    }
+    vTaskDelete(NULL);
+}
+
 void app_main(void)
 {
     print_chip_info();
@@ -65,6 +77,7 @@ void app_main(void)
     if (cyd_display_start() != ESP_OK) {
         ESP_LOGW(TAG, "CYD display did not start; web portal still available");
     }
+    xTaskCreate(ble_later, "ble_dly", 4096, NULL, 5, NULL);
 
     for (int i = 0; ; i++) {
         if (wifi_manager_is_connected()) {

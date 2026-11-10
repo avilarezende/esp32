@@ -12,8 +12,11 @@ typedef struct {
     uint16_t cam_ms;     /* snapshot refresh (ms) */
     uint8_t inv;         /* panel colour inversion */
     uint8_t bgr;         /* BGR element order (reboot) */
+    uint8_t panel;       /* 0 auto, 1 ILI9341, 2 ST7789, 3 ILI9342 (reboot) */
     uint8_t bright;      /* backlight 5..100 % */
-    uint16_t saver_s;    /* idle seconds before the rest screen */
+    uint16_t saver_s;    /* idle seconds before the rest screen (default 120) */
+    uint8_t day_start;   /* inclusive hour: saver with clock (default 6) */
+    uint8_t day_end;     /* exclusive hour: screen off from here (default 21) */
     uint8_t cat;         /* cat animation */
     uint8_t clk24;       /* 24 h clock */
     uint8_t alerts;      /* show alerts banner/badge */
@@ -28,3 +31,13 @@ const cyd_cfg_t *cyd_cfg(void);
 void cyd_cfg_set_form(const char *body);
 void cyd_cfg_set_u8(const char *key, uint8_t v);
 void cyd_cfg_json(char *buf, size_t len);
+
+/* display_task records what it actually brought up. `id_hex` is the matched
+ * chip id ("858552") or the raw RDDID when nothing matched. */
+void cyd_cfg_note_panel(int resolved, const char *id_hex);
+int cyd_cfg_panel_on(void);
+const char *cyd_cfg_panel_id(void);
+/* Inversion applied to the glass. A saved disp_inv wins. With no saved
+ * value, ILI9342 starts inverted and ILI9341 / ST7789 stay off (the CYD2USB
+ * User_Setup ends on TFT_INVERSION_OFF). */
+int cyd_cfg_inv_effective(void);

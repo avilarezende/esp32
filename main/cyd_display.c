@@ -28,6 +28,7 @@
 #include "cyd_camera.h"
 #include "nvs.h"
 #include "cyd_cfg.h"
+#include "cyd_panel.h"
 #include "driver/ledc.h"
 #include "esp_random.h"
 #include "esp_system.h"
@@ -40,7 +41,9 @@
 
 static const char *TAG = "cyd";
 
-/* ESP32-2432S028 (Cheap Yellow Display, 2.8"). Same pins as TFT_eSPI's CYD setup. */
+/* ESP32-2432S028 (Cheap Yellow Display, 2.8"), both USB variants. The 1-USB
+ * board is an ILI9341. The 2-USB board is usually an ST7789 (sometimes an
+ * ILI9342). Pins match TFT_eSPI's CYD and CYD2USB setups. */
 #define PIN_LCD_SCLK 14
 #define PIN_LCD_MOSI 13
 #define PIN_LCD_MISO 12 /* ILI9341 SDO; input, so it does not change the GPIO12 strap at reset */
@@ -57,13 +60,16 @@ static const char *TAG = "cyd";
 #define TOUCH_HOST SPI3_HOST
 #define BAND_H     20
 #define SAVER_MS   ((int64_t)cyd_cfg()->saver_s * 1000LL)
-#define SLEEP_MS   (40LL * 60LL * 1000LL)
+#define PLAY_FLOOR 168
+#define PLAY_DW (CYD_WALK_W * CYD_WALK_SCALE)
 
 static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_panel_io_handle_t s_lcd_io;
 static spi_device_handle_t s_touch;
 static int s_sntp_started;
 static int s_screen_on = 1;
+static volatile int s_quiet;
+static volatile int s_in_cam;
 
 /* Camera viewer request (set from the HTTP task, consumed by the display task). */
 static portMUX_TYPE s_cam_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -320,6 +326,23 @@ static void present_invalidate(void)
     memset(s_band_valid, 0, sizeof s_band_valid);
 }
 
+void cyd_display_set_quiet(int on)
+{
+    s_quiet = on ? 1 : 0;
+    if (on) {
+        portENTER_CRITICAL(&s_cam_mux);
+        s_cam_secs = 0;
+        portEXIT_CRITICAL(&s_cam_mux);
+    } else {
+        present_invalidate();
+    }
+}
+
+int cyd_display_is_busy(void)
+{
+    return s_in_cam;
+}
+
 static void present(const cyd_scene_t *scene)
 {
     for (int y = 0, i = 0; y < CYD_H; y += BAND_H, i++) {
@@ -355,10 +378,27 @@ static void set_screen(int on)
         return;
     }
     s_screen_on = on;
-    if (s_panel) {
-        esp_lcd_panel_disp_on_off(s_panel, on);
+    if (!on) {
+        bl_set(0);
     }
-    bl_set(on);
+    if (s_panel) {
+        if (on) {
+            /* SLPOUT, then DISPON. The driver waits 120 ms after sleep-out. */
+            if (esp_lcd_panel_disp_sleep(s_panel, false) != ESP_OK) {
+                ESP_LOGW(TAG, "panel sleep-out failed");
+            }
+            esp_lcd_panel_disp_on_off(s_panel, true);
+        } else {
+            esp_lcd_panel_disp_on_off(s_panel, false);
+            if (esp_lcd_panel_disp_sleep(s_panel, true) != ESP_OK) {
+                ESP_LOGW(TAG, "panel sleep-in failed");
+            }
+        }
+    }
+    if (on) {
+        bl_set(1);
+        present_invalidate();
+    }
     ESP_LOGI(TAG, "panel %s", on ? "on" : "sleep");
 }
 
@@ -376,6 +416,10 @@ static void fill_from_ha(cyd_scene_t *scene)
         scene->humidity = ha.humidity;
         scene->has_humidity = 1;
     }
+    if (ha.has_cond && ha.cond[0]) {
+        scene->has_cond = 1;
+        snprintf(scene->cond, sizeof scene->cond, "%s", ha.cond);
+    }
     scene->row_count = ha.device_count;
     if (scene->row_count > CYD_ROW_MAX) {
         scene->row_count = CYD_ROW_MAX;
@@ -392,12 +436,15 @@ static void maybe_sntp(void)
     if (s_sntp_started || !wifi_manager_is_connected()) {
         return;
     }
+    /* America/Fortaleza is UTC-3 all year (no DST). The POSIX form avoids
+     * pulling the zoneinfo table into the image. */
     setenv("TZ", "<-03>3", 1);
     tzset();
     esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    cfg.wait_for_sync = false;
     if (esp_netif_sntp_init(&cfg) == ESP_OK) {
         s_sntp_started = 1;
-        ESP_LOGI(TAG, "SNTP started (America/Sao_Paulo, UTC-3)");
+        ESP_LOGI(TAG, "SNTP America/Fortaleza (UTC-3, sem horario de verao)");
     }
 }
 
@@ -408,6 +455,74 @@ void cyd_lcd_drain(void)
     if (s_lcd_io) {
         esp_lcd_panel_io_tx_param(s_lcd_io, 0x00, NULL, 0);
     }
+}
+
+/* ST7789_DRIVER sequence from TFT_eSPI (the one CYD2USB/User_Setup.h selects),
+ * minus MADCTL: the panel driver writes that from `bgr`, then swap/mirror.
+ * LCMCTRL 0x0C is XMX|XMH. XMX flips the MX bit, so ST7789 rotation 1
+ * (MX|MV|BGR) lands on the same MV|BGR the ILI9341 path already uses and
+ * the XPT2046 calibration expects. XMH only affects an RGB interface.
+ * RAMCTRL 0x00,0xE0 is what makes 16-bit SPI pixels RGB565; without it the
+ * picture is scrambled. The ILI9341 vendor command 0xC0=0x23 is this same
+ * LCMCTRL on an ST7789 and sets XMV, which is the scrambled 2-USB glass. */
+static const uint8_t s_st_b6[] = {0x0A, 0x82};
+static const uint8_t s_st_ram[] = {0x00, 0xE0};
+static const uint8_t s_st_col[] = {0x55};
+static const uint8_t s_st_por[] = {0x0C, 0x0C, 0x00, 0x33, 0x33};
+static const uint8_t s_st_gctrl[] = {0x35};
+static const uint8_t s_st_vcom[] = {0x28};
+static const uint8_t s_st_lcm[] = {0x0C};
+static const uint8_t s_st_vdv[] = {0x01, 0xFF};
+static const uint8_t s_st_vrh[] = {0x10};
+static const uint8_t s_st_vdvs[] = {0x20};
+static const uint8_t s_st_fr[] = {0x0F};
+static const uint8_t s_st_pwr[] = {0xA4, 0xA1};
+static const uint8_t s_st_pgam[] = {
+    0xD0, 0x00, 0x02, 0x07, 0x0A, 0x28, 0x32, 0x44, 0x42, 0x06, 0x0E, 0x12, 0x14, 0x17,
+};
+static const uint8_t s_st_ngam[] = {
+    0xD0, 0x00, 0x02, 0x07, 0x0A, 0x28, 0x31, 0x54, 0x47, 0x0E, 0x1C, 0x17, 0x1B, 0x1E,
+};
+static const ili9341_lcd_init_cmd_t s_st7789_init[] = {
+    {LCD_CMD_NORON, NULL, 0, 0},
+    {0xB6, s_st_b6, sizeof s_st_b6, 0},
+    {0xB0, s_st_ram, sizeof s_st_ram, 0},
+    {LCD_CMD_COLMOD, s_st_col, sizeof s_st_col, 10},
+    {0xB2, s_st_por, sizeof s_st_por, 0},
+    {0xB7, s_st_gctrl, sizeof s_st_gctrl, 0},
+    {0xBB, s_st_vcom, sizeof s_st_vcom, 0},
+    {0xC0, s_st_lcm, sizeof s_st_lcm, 0},
+    {0xC2, s_st_vdv, sizeof s_st_vdv, 0},
+    {0xC3, s_st_vrh, sizeof s_st_vrh, 0},
+    {0xC4, s_st_vdvs, sizeof s_st_vdvs, 0},
+    {0xC6, s_st_fr, sizeof s_st_fr, 0},
+    {0xD0, s_st_pwr, sizeof s_st_pwr, 0},
+    {0xE0, s_st_pgam, sizeof s_st_pgam, 0},
+    {0xE1, s_st_ngam, sizeof s_st_ngam, 0},
+    {LCD_CMD_INVON, NULL, 0, 0},
+};
+static const ili9341_vendor_config_t s_st7789_vendor = {
+    .init_cmds = s_st7789_init,
+    .init_cmds_size = sizeof s_st7789_init / sizeof s_st7789_init[0],
+};
+
+/* RDDID / Read-ID4. A miss (MISO idle, unknown id) stays on ILI9341. */
+static void panel_probe(esp_lcd_panel_io_handle_t io, uint8_t id04[4], uint8_t idd3[4])
+{
+    memset(id04, 0, 4);
+    memset(idd3, 0, 4);
+    if (esp_lcd_panel_io_tx_param(io, LCD_CMD_SWRESET, NULL, 0) != ESP_OK) {
+        return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(120));
+    if (esp_lcd_panel_io_tx_param(io, LCD_CMD_SLPOUT, NULL, 0) != ESP_OK) {
+        return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(120));
+    /* Four clocks: one dummy plus the 24-bit id. Longer reads walk off the
+     * parameter and can leave the controller mid-byte. */
+    esp_lcd_panel_io_rx_param(io, LCD_CMD_RDDID, id04, 4);
+    esp_lcd_panel_io_rx_param(io, 0xD3, idd3, 4); /* ILI9341 Read ID4 */
 }
 
 static esp_err_t panel_bringup(void)
@@ -457,6 +572,22 @@ static esp_err_t panel_bringup(void)
     }
     s_lcd_io = io;
 
+    uint8_t id04[4], idd3[4];
+    uint32_t chip = 0;
+    panel_probe(io, id04, idd3);
+    int detected = cyd_panel_from_ids(id04, 4, idd3, 4, &chip);
+    int resolved = cyd_panel_resolve(cyd_cfg()->panel, detected);
+    char idhex[16];
+    if (chip) {
+        snprintf(idhex, sizeof idhex, "%lx", (unsigned long)chip);
+    } else {
+        snprintf(idhex, sizeof idhex, "%02x%02x%02x%02x", id04[0], id04[1], id04[2], id04[3]);
+    }
+    cyd_cfg_note_panel(resolved, idhex);
+    ESP_LOGI(TAG, "panel id 04:%02x%02x%02x%02x d3:%02x%02x%02x%02x -> %s (saved %s)",
+             id04[0], id04[1], id04[2], id04[3], idd3[0], idd3[1], idd3[2], idd3[3],
+             cyd_panel_name(resolved), cyd_panel_name(cyd_cfg()->panel));
+
     esp_lcd_panel_dev_config_t panel_cfg = {
         .reset_gpio_num = -1,
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
@@ -466,9 +597,12 @@ static esp_err_t panel_bringup(void)
 #endif
         .bits_per_pixel = 16,
     };
+    if (resolved == CYD_PANEL_ST7789) {
+        panel_cfg.vendor_config = (void *)&s_st7789_vendor;
+    }
     err = esp_lcd_new_panel_ili9341(io, &panel_cfg, &s_panel);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "ili9341 create failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "panel create failed: %s", esp_err_to_name(err));
         return err;
     }
     err = esp_lcd_panel_reset(s_panel);
@@ -476,20 +610,22 @@ static esp_err_t panel_bringup(void)
         err = esp_lcd_panel_init(s_panel);
     }
     if (err == ESP_OK) {
-        /* Landscape, same MADCTL as TFT_eSPI rotation 1 on this board. */
+        /* Landscape. ILI9341 / ILI9342: TFT_eSPI rotation 1 is MV|BGR
+         * (swap, no mirror). ST7789 rotation 1 writes MX|MV|BGR; LCMCTRL
+         * 0x0C XORs MX away, so the glass matches the other two. */
         err = esp_lcd_panel_swap_xy(s_panel, true);
     }
     if (err == ESP_OK) {
-        err = esp_lcd_panel_mirror(s_panel, false, false);
+        err = esp_lcd_panel_mirror(s_panel, resolved == CYD_PANEL_ST7789, false);
     }
     if (err == ESP_OK) {
-        err = esp_lcd_panel_invert_color(s_panel, cyd_cfg()->inv != 0);
+        err = esp_lcd_panel_invert_color(s_panel, cyd_cfg_inv_effective() != 0);
     }
     if (err == ESP_OK) {
         err = esp_lcd_panel_disp_on_off(s_panel, true);
     }
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "ili9341 init failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "panel init failed: %s", esp_err_to_name(err));
         return err;
     }
 
@@ -523,7 +659,8 @@ static esp_err_t panel_bringup(void)
     gpio_config(&irq);
 
     bl_set(1);
-    ESP_LOGI(TAG, "CYD panel ready (320x240)");
+    ESP_LOGI(TAG, "CYD panel ready (%s, 320x240, inv %d, bgr %u)",
+             cyd_panel_name(resolved), cyd_cfg_inv_effective(), cyd_cfg()->bgr);
     return ESP_OK;
 }
 
@@ -549,6 +686,11 @@ static void fill_black(void)
 static void run_camera(const char *entity, int secs)
 {
     ESP_LOGI(TAG, "camera %s for %ds", entity, secs);
+    s_in_cam = 1;
+    if (s_quiet) {
+        s_in_cam = 0;
+        return;
+    }
     set_screen(1);
     shot_service();
     wait_release(1500);
@@ -558,6 +700,9 @@ static void run_camera(const char *entity, int secs)
     while (esp_timer_get_time() < until) {
         int64_t t0 = esp_timer_get_time();
         s_disp_beat = t0;
+        if (s_quiet) {
+            break;
+        }
         shot_service();
         uint8_t *jpg = NULL;
         int len = 0;
@@ -569,12 +714,20 @@ static void run_camera(const char *entity, int secs)
             break;
         }
         free(jpg);
+        if (s_quiet) {
+            s_in_cam = 0;
+            present_invalidate();
+            return;
+        }
         /* ~1 frame per second; a new tap closes the viewer. */
         while ((esp_timer_get_time() - t0) < (int64_t)cyd_cfg()->cam_ms * 1000) {
             shot_service();
-            if (touch_down()) {
-                wait_release(1500);
+            if (s_quiet || touch_down()) {
+                if (!s_quiet) {
+                    wait_release(1500);
+                }
                 present_invalidate();
+                s_in_cam = 0;
                 return;
             }
             vTaskDelay(pdMS_TO_TICKS(40));
@@ -587,6 +740,7 @@ static void run_camera(const char *entity, int secs)
         portEXIT_CRITICAL(&s_cam_mux);
     }
     present_invalidate();
+    s_in_cam = 0;
 }
 
 void cyd_display_show_camera(const char *entity, int seconds)
@@ -629,7 +783,7 @@ static void apply_pending(void)
     }
     if (s_cfg_pending) {
         s_cfg_pending = 0;
-        if (s_panel) esp_lcd_panel_invert_color(s_panel, cyd_cfg()->inv != 0);
+        if (s_panel) esp_lcd_panel_invert_color(s_panel, cyd_cfg_inv_effective() != 0);
         if (s_screen_on) bl_set(1);
     }
 }
@@ -687,7 +841,7 @@ static void shot_drain(void)
 
 static void store_px(uint16_t *dst, uint16_t c)
 {
-    if (cyd_cfg()->inv) {
+    if (cyd_cfg_inv_effective()) {
         c ^= 0xFFFF; /* INVON flips the glass, not the GRAM */
     }
     *dst = c;
@@ -926,6 +1080,144 @@ void cyd_display_shot_end(void)
     }
 }
 
+/* Day-saver cat. State lives here so the painter stays a pure function of
+ * the scene (host tests paint one frame at a time). */
+static int play_inited;
+static int play_x, play_y, play_dir, play_pose, play_act, play_left, play_bat;
+static int play_toy, play_tx, play_ty;
+
+static void play_begin(int act, int turn)
+{
+    play_act = act;
+    play_bat = 0;
+    play_y = PLAY_FLOOR;
+    if (play_dir == 0) {
+        play_dir = 1;
+    }
+    if (turn && (esp_random() & 1)) {
+        play_dir = -play_dir;
+    }
+    if (act == 0) {
+        play_left = 10 + (int)(esp_random() % 14);
+        play_toy = 0;
+        play_pose = CYD_WALK_A;
+    } else if (act == 1) {
+        play_left = 8 + (int)(esp_random() % 10);
+        play_pose = CYD_WALK_SIT;
+        play_toy = 0;
+    } else {
+        int span = 40 + (int)(esp_random() % 48);
+        play_toy = (act == 2) ? 1 : 2;
+        play_left = 16 + (int)(esp_random() % 8);
+        play_tx = play_x + (PLAY_DW / 2) + play_dir * span;
+        if (play_tx < 12 || play_tx > CYD_W - 12) {
+            play_dir = -play_dir;
+            play_tx = play_x + (PLAY_DW / 2) + play_dir * span;
+        }
+        if (play_tx < 12) {
+            play_tx = 12;
+        }
+        if (play_tx > CYD_W - 12) {
+            play_tx = CYD_W - 12;
+        }
+        play_ty = PLAY_FLOOR + CYD_WALK_H * CYD_WALK_SCALE - 8;
+    }
+}
+
+static void play_clamp(void)
+{
+    if (play_x < 2) {
+        play_x = 2;
+        play_dir = 1;
+    }
+    if (play_x > CYD_W - PLAY_DW - 2) {
+        play_x = CYD_W - PLAY_DW - 2;
+        play_dir = -1;
+    }
+}
+
+static void play_step(void)
+{
+    if (!play_inited) {
+        play_x = 16;
+        play_dir = 1;
+        play_inited = 1;
+        play_begin(0, 0);
+        return;
+    }
+    if (play_act == 1) {
+        play_pose = CYD_WALK_SIT;
+        play_y = PLAY_FLOOR + 2 + ((play_left & 4) ? 1 : 0);
+        if (--play_left <= 0) {
+            play_begin(0, 1);
+        }
+        return;
+    }
+    if (play_act == 0) {
+        play_x += play_dir * 4;
+        play_pose = (play_pose == CYD_WALK_B) ? CYD_WALK_A : CYD_WALK_B;
+        play_y = PLAY_FLOOR + (play_pose == CYD_WALK_B ? 1 : 0);
+        play_clamp();
+        if (--play_left <= 0) {
+            int r = (int)(esp_random() % 5);
+            if (r == 0) {
+                play_begin(1, 0);
+            } else if (r == 1) {
+                play_begin(2, 0);
+            } else if (r == 2) {
+                play_begin(3, 0);
+            } else {
+                play_begin(0, 1);
+            }
+        }
+        return;
+    }
+    {
+        int center = play_x + PLAY_DW / 2;
+        int dx = play_tx - center;
+        if (play_bat > 0) {
+            play_pose = CYD_WALK_POUNCE;
+            play_y = PLAY_FLOOR - 2;
+            if (--play_bat == 0) {
+                play_tx += play_dir * 28;
+                if (play_tx < 10) {
+                    play_tx = 10;
+                }
+                if (play_tx > CYD_W - 10) {
+                    play_tx = CYD_W - 10;
+                }
+                play_ty = PLAY_FLOOR + CYD_WALK_H * CYD_WALK_SCALE - 6;
+            }
+        } else if (dx > 16 || dx < -16) {
+            play_dir = dx > 0 ? 1 : -1;
+            play_x += play_dir * 7;
+            play_clamp();
+            play_pose = (play_pose == CYD_WALK_B) ? CYD_WALK_A : CYD_WALK_B;
+            play_y = PLAY_FLOOR;
+        } else {
+            play_pose = CYD_WALK_POUNCE;
+            play_dir = dx >= 0 ? 1 : -1;
+            play_bat = 3;
+            play_y = PLAY_FLOOR + 1;
+        }
+        if (--play_left <= 0) {
+            play_toy = 0;
+            play_begin(1, 0);
+        }
+    }
+}
+
+static void play_publish(cyd_scene_t *scene)
+{
+    scene->play_x = play_x;
+    scene->play_y = play_y;
+    scene->play_pose = play_pose;
+    scene->play_dir = play_dir;
+    scene->play_toy = play_toy;
+    scene->play_tx = play_tx;
+    scene->play_ty = play_ty;
+}
+
 static void display_task(void *arg)
 {
     (void)arg;
@@ -937,6 +1229,7 @@ static void display_task(void *arg)
     int behavior = 0, beh_start = 0, beh_len = 24;
     int cat_force = -1, cat_hold = 0, cat_phase0 = 0, cat_salt = 0, prev_alerts = 0;
     int was_down = 0;
+    int wake_hold = 0;
     int alerts_view = 0, long_done = 0, alert_count_last = 0, banner_last = 0;
     int64_t down_since = 0;
     int64_t alerts_since = 0;
@@ -945,6 +1238,14 @@ static void display_task(void *arg)
 
     while (1) {
         s_disp_beat = esp_timer_get_time();
+        if (s_quiet) {
+            portENTER_CRITICAL(&s_cam_mux);
+            s_cam_secs = 0;
+            portEXIT_CRITICAL(&s_cam_mux);
+            shot_service();
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
         maybe_sntp();
         apply_pending();
         shot_service();
@@ -977,19 +1278,30 @@ static void display_task(void *arg)
         int tx = -1, ty = -1;
         int down = touch_xy(&tx, &ty) || touch_down();
         int tap = down && !was_down;
-        if (tap) {
-            /* Any touch: the cat purrs for a few frames, including a wake. */
-            cat_force = CYD_CAT_PURR;
-            cat_hold = 10 + (int)(esp_random() % 8);
-            cat_phase0 = frame;
-            cat_salt = (int)(esp_random() & 15);
+        /* The press that leaves the saver or a dark panel only wakes.
+         * Buttons, the alert list and the long-press clear wait for a new tap. */
+        int resting = !s_screen_on || last_mode == CYD_UI_SAVER || last_mode == CYD_UI_SLEEP;
+        if (!down) {
+            wake_hold = 0;
+        } else if (tap && resting) {
+            wake_hold = 1;
         }
-        if (down) {
-            int on_saver = last_mode == CYD_UI_SAVER;
+        if (down && wake_hold) {
+            idle_since = esp_timer_get_time();
+            if (!s_screen_on) {
+                set_screen(1);
+            }
+        } else if (down) {
             int woke = !s_screen_on || (last_mode != CYD_UI_HOME && last_mode != CYD_UI_ALERTS);
             idle_since = esp_timer_get_time();
             if (!s_screen_on) {
                 set_screen(1);
+            }
+            if (tap) {
+                cat_force = CYD_CAT_PURR;
+                cat_hold = 10 + (int)(esp_random() % 8);
+                cat_phase0 = frame;
+                cat_salt = (int)(esp_random() & 15);
             }
             if (!was_down) down_since = esp_timer_get_time();
             int has_alerts = alert_count_last > 0;
@@ -1008,7 +1320,7 @@ static void display_task(void *arg)
                 continue;
             }
             /* big target: whole top strip (left of the Porta button) or the banner */
-            if (!was_down && has_alerts && (last_mode == CYD_UI_HOME || on_saver) && ty >= 0 &&
+            if (!was_down && has_alerts && last_mode == CYD_UI_HOME && ty >= 0 &&
                 ((ty < 70 && tx < CYD_CAMBTN_X - 6) || (banner_last && ty >= 190))) {
                 alerts_view = 1;
                 alerts_since = esp_timer_get_time();
@@ -1027,7 +1339,7 @@ static void display_task(void *arg)
         if (frame - beh_start >= beh_len) {
             int prev = behavior;
             /* Idle most of the time. Stretch and a look-around are occasional.
-             * Sleep is not in this pool: it belongs to the night screensaver. */
+             * At night the panel sleeps instead of showing this cat. */
             static const int pool[5] = {
                 CYD_CAT_IDLE, CYD_CAT_IDLE, CYD_CAT_IDLE, CYD_CAT_STRETCH, CYD_CAT_ALERT
             };
@@ -1098,23 +1410,20 @@ static void display_task(void *arg)
             snprintf(scene.ip, sizeof scene.ip, "%s", ip);
         }
 
+        scene.drift = (int)((frame / 16) % 7) - 3;
         if (!wifi_manager_is_connected()) {
             scene.mode = CYD_UI_PORTAL;
             if (!s_screen_on) {
                 set_screen(1);
             }
-        } else if (idle_ms >= SLEEP_MS) {
+        } else if (idle_ms >= SAVER_MS && cyd_is_night(scene.time_valid, hour24,
+                                                       cyd_cfg()->day_start, cyd_cfg()->day_end)) {
+            /* 21:00–06:00 by default: backlight off and the panel in sleep. */
             scene.mode = CYD_UI_SLEEP;
             set_screen(0);
         } else if (idle_ms >= SAVER_MS) {
             scene.mode = CYD_UI_SAVER;
             scene.blink = 1;
-            if (!scene.has_temp) {
-                scene.temp_c = 26;
-            }
-            if (!scene.has_humidity) {
-                scene.humidity = 62;
-            }
             if (!s_screen_on) {
                 set_screen(1);
             }
@@ -1138,10 +1447,10 @@ static void display_task(void *arg)
             if (--cat_hold <= 0) {
                 cat_force = -1;
             }
-        } else if (scene.mode == CYD_UI_SAVER && (hour24 >= 21 || (hour24 >= 0 && hour24 < 6))) {
-            scene.behavior = CYD_CAT_SLEEP;
-            scene.phase = frame;
-            scene.cat_salt = 0;
+        }
+        if (scene.mode == CYD_UI_SAVER && scene.cat_on) {
+            play_step();
+            play_publish(&scene);
         }
 
         if (scene.mode == CYD_UI_SLEEP) {
@@ -1198,6 +1507,8 @@ esp_err_t cyd_display_start(void)
 #include <stdio.h>
 
 void cyd_display_apply_cfg(void) {}
+void cyd_display_set_quiet(int on) { (void)on; }
+int cyd_display_is_busy(void) { return 0; }
 void cyd_touch_json(char *buf, size_t n) { if (n) snprintf(buf, n, "{}"); }
 void cyd_alert_push(const char *id, const char *title, const char *msg, int level, int secs) { (void)id; (void)title; (void)msg; (void)level; (void)secs; }
 void cyd_alert_dismiss(const char *id) { (void)id; }

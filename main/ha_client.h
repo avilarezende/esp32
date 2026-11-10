@@ -23,8 +23,10 @@ typedef struct {
     int ready;        /* 1 = last fetch ok, 0 = never, -1 = failed */
     int has_temp;
     int has_humidity;
+    int has_cond;
     int temp_c;
     int humidity;
+    char cond[16];       /* short pt-BR phrase from the first weather.* entity */
     int lights_on;
     int lights_total;
     int device_count;
@@ -38,6 +40,11 @@ typedef struct {
 
 /* Start the background poller (no-op when CYD is disabled). */
 esp_err_t ha_client_start(void);
+
+/* Skip HA fetches while an OTA is using the heap. pause_wait blocks until
+ * the current fetch (if any) returns. */
+void ha_client_set_paused(int paused);
+void ha_client_pause_wait(void);
 
 /* Copy the latest snapshot under the poller lock. */
 void ha_client_copy(ha_snapshot_t *out);

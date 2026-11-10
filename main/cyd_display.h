@@ -12,12 +12,19 @@ esp_err_t cyd_display_start(void);
 void cyd_display_show_camera(const char *entity, int seconds);
 
 /* Panel colour options, saved in NVS. invert and brightness are applied on
- * the next display_task pass (not from the HTTP task); bgr needs a reboot.
+ * the next display_task pass (not from the HTTP task); bgr and the panel
+ * driver (ILI9341 / ST7789 / ILI9342) need a reboot.
  * test=1 shows colour bars (red, green, blue, white, black) for 15 s. */
 void cyd_display_set_color(int invert, int bgr, int test);
 
 /* Ask display_task to re-apply cyd_cfg() (inversion, brightness). */
 void cyd_display_apply_cfg(void);
+
+/* Stop the camera viewer and the cat animation so OTA is the only thing
+ * allocating. The display task keeps its watchdog heartbeat. */
+void cyd_display_set_quiet(int on);
+/* 1 while a camera snapshot download is in progress. */
+int cyd_display_is_busy(void);
 
 /* Alerts shown as banner + badge; level 0 info, 1 warning, 2 critical;
  * secs 0 = until dismissed. Same id replaces. dismiss(NULL/"") clears all. */

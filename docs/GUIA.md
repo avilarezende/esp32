@@ -9,11 +9,13 @@ Firmware para **ESP32** (ESP-IDF 5.3.2) que:
 
 1. Entra na rede Wi-Fi salva ou sobe o portal `ESP32-Setup` no primeiro uso.
 2. Serve um app web no celular (chat, Casa, Ajustes, **Tela do CYD**, OTA).
-3. No **CYD 2.8"** (ESP32-2432S028, ILI9341 + XPT2046) desenha relógio, clima,
-   dispositivos, câmera e alertas.
+3. No **CYD 2.8"** (ESP32-2432S028, ILI9341 ou ST7789/ILI9342 + XPT2046)
+   desenha relógio, clima, dispositivos, câmera e alertas.
 
-Placa alvo do painel: **só a amarela de 2.8"**. A de 3.5" usa outro controlador
-e não acende com esta imagem.
+Placa alvo do painel: **a amarela de 2.8"**, a de um micro-USB e a de dois
+USB (micro-USB + USB-C). A de 3.5" usa outro controlador e não acende com
+esta imagem. A escolha do controlador está em
+[INSTALACAO.md](INSTALACAO.md#qual-placa-1-usb-ou-2-usb).
 
 ## Telas do painel
 
@@ -28,14 +30,14 @@ protetor e alertas):
   alertas, o estado do HA (na observação) e o ícone de internet.
 - Temperatura em âmbar e umidade em azul. Ligado é verde, desligado é o texto
   apagado, qualquer outro estado é azul.
-- O gato calico continua na observação e no protetor. O desenho é um
-  sprite em paleta (RLE), com borda antialiasada no fundo escuro: pelo
-  branco, mancha laranja e mancha preta, orelha esquerda preta, orelha
-  direita laranja, bigodes e olhos com brilho. Não entra no portal nem na
-  lista de alertas.
-- O toque não mudou de lugar: a faixa de cima (à esquerda do botão **Porta**)
-  e a faixa de baixo abrem os alertas; **LIMPAR TUDO** segue em `y >= 180`;
-  o botão **Porta** segue no canto superior direito.
+- O gato calico da observação segue o sprite em paleta (RLE), com borda
+  antialiasada no fundo escuro: pelo branco, mancha laranja e mancha preta.
+  No descanso diurno entra outro gato, menor, que anda pela faixa de baixo.
+  Nenhum dos dois entra no portal nem na lista de alertas.
+- Na observação o toque não mudou de lugar: a faixa de cima (à esquerda do
+  botão **Porta**) e a faixa de baixo abrem os alertas; **LIMPAR TUDO** segue
+  em `y >= 180`. No descanso e com a tela apagada, o primeiro toque só acorda.
+  O botão **Porta** segue no canto superior direito da observação.
 - Cada quadro é pintado em faixas de 20 px. Uma faixa igual à do quadro
   anterior não vai de novo ao painel, então o gato não redesenha a tela
   inteira. O clock do LCD continua em 10 MHz.
@@ -127,9 +129,33 @@ ou o decodificador não voltam em **45 s**, o watchdog reinicia a placa
 
 ### Protetor de tela
 
-Após o tempo de descanso (padrão **30 s**) sem toque, o relógio grande toma a
-tela. A data fica na barra, junto com o ícone de internet; lugar, temperatura
-e umidade ficam num cartão; o gato calico fica no centro:
+Sem toque pelo tempo de `saver_s` (padrão de fábrica **120 s**, ajustável de
+10 a 3600; NVS `c_saver`), o painel sai da observação.
+
+- **Entre `day_start` e `day_end`** (padrão **6** e **21**, horas cheias,
+  o fim é exclusivo; NVS `c_day0` e `c_day1`): descanso com a hora grande,
+  a data na barra, o clima e um gato cálico pequeno que anda, para, senta
+  e persegue uma bolinha ou um novelo. O relógio desloca alguns pixels de
+  tempos em tempos para não marcar o LCD. A hora vem do SNTP
+  (`pool.ntp.org`) no fuso **America/Fortaleza** (UTC−3, sem horário de
+  verão, `TZ=<-03>3`).
+- **Fora desse intervalo** (padrão 21 h–6 h): a backlight apaga e o
+  controlador recebe sleep (`SLPIN` / `SLPOUT`, o mesmo comando no ILI9341
+  e no ST7789). Um toque acende de novo. Nova inatividade apaga outra vez.
+- **Sem hora válida ainda** (SNTP não sincronizou): o descanso diurno
+  aparece sem relógio. A tela não apaga, porque não dá para saber se é noite.
+- O primeiro toque no descanso ou na tela apagada **só acorda**. Não abre
+  alerta, não dispara o botão Porta e não limpa a lista. O gesto seguinte,
+  já na observação, é que age nos botões.
+- A varredura BLE (`GET /ble`) não para com a tela apagada nem no descanso.
+
+O clima do descanso é o mesmo `POST /api/template` que já alimenta o painel.
+O template lê o primeiro `weather.*` do Home Assistant (temperatura, umidade
+e o estado: `sunny`, `cloudy`, `rainy`, …) e o firmware traduz para uma frase
+curta (`sol`, `nublado`, `chuva`, `parcial`, …). Sem entidade `weather`,
+temperatura e umidade caem para sensores com `device_class` temperature /
+humidity. Sem nenhum dos dois, o cartão diz `clima indisponivel` — o descanso
+não inventa 26 °C.
 
 ![Protetor](images/cyd-saver-ha.png)
 
@@ -158,12 +184,21 @@ A tarefa `cyd_net` não bloqueia a tela nem o poller do HA:
 - O campo de URL em Ajustes (`net_url`, NVS `c_net`) continua gravado, mas
   o globo não o consulta.
 
-Um toque volta à observação. Após **40 minutos** sem uso a backlight apaga; um
-toque acorda o painel. O gato respira, pisca devagar, mexe o rabo e, de vez
-em quando, a orelha. De tempos em tempos alonga e boceja, ou olha para cima.
-Entre 21 h e 6 h, no protetor, ele dorme (com z). Um alerta novo do HA faz
-ele erguer as orelhas; um toque faz ele ronronar. O intervalo de cada pose
-é sorteado. Dá para desligar a animação em Ajustes.
+Na observação o gato grande continua: respira, pisca, mexe o rabo e a
+orelha, alonga e, de vez em quando, olha para cima. Um alerta novo do HA
+ergue as orelhas; um toque na observação faz ele ronronar. Dá para desligar
+a animação em Ajustes (`cat`). O gato do descanso é outro sprite, de 32×22,
+desenhado na faixa de 20 px que o painel já usa — sem framebuffer extra.
+
+Exemplo (porta 80, campos que existirem são gravados):
+
+```bash
+curl -s -X POST -d "saver_s=120&day_start=6&day_end=21" http://IP_DO_CYD/config
+```
+
+Uma placa que já tiver `c_saver` na NVS (por exemplo 30, o padrão antigo)
+mantém esse número até um `POST /config` novo. `GET /config` devolve
+`saver_s`, `day_start` e `day_end`.
 
 ### Alertas
 
@@ -185,8 +220,10 @@ Acentos saem dobrados para ASCII na fonte do painel (`ã` vira `a`).
 
 ### Cores
 
-A inversão do painel vem **desligada** (`inv=0`), que é o certo para esta
-placa. A ordem **BGR** vem ligada. `POST /config` e `POST /display` só gravam
+A inversão do painel vem **desligada** (`inv=0`) no ILI9341 e no ST7789, que
+é o certo para a placa de 1 USB e para o `User_Setup` CYD2USB. A ordem
+**BGR** vem ligada. O ILI9342, quando escolhido e ainda sem `disp_inv` na
+NVS, liga a inversão. `POST /config` e `POST /display` só gravam
 o ajuste e levantam um pedido: inversão e brilho entram na **próxima passagem**
 da tarefa da tela (`display_task`). O servidor HTTP não chama
 `esp_lcd_panel_invert_color()` nem o controle da backlight — fazer isso no
@@ -207,7 +244,9 @@ O mesmo aparelho serve a interface no navegador, na porta **80**:
 - **Casa** lista as mesmas linhas do painel.
 - **Ajustes → Tela do CYD** grava em `GET /config` e `POST /config`: entidades,
   ração, câmeras, rótulo e ícone do botão, duração da campainha, intervalo do
-  snapshot, brilho (5–100%), inverter cores, BGR, segundos até o descanso,
+  snapshot, brilho (5–100%), controlador do painel (ILI9341, ST7789 ou
+  ILI9342), inverter cores, BGR, segundos até o descanso, hora em que o
+  relógio começa (`day_start`) e hora em que a tela apaga (`day_end`),
   gato, relógio 24 h, alertas e a URL salva em `net_url`. Essa URL não pinta
   o globo; a sonda usa a lista fixa descrita em [Protetor de tela](#protetor-de-tela).
 - **Atualizar firmware** envia `esp32-ota.bin` (ou uma URL) com a chave do
@@ -367,8 +406,8 @@ curl -s "http://IP_DO_CYD/touch"
 
 | Evento | Tempo |
 |--------|-------|
-| Protetor (relógio grande) | 30 s sem toque (ajustável, 10–3600 s) |
-| Tela off (backlight) | 40 min sem toque |
+| Descanso (relógio, clima, gato) | 120 s sem toque, das 6 h às 21 h (ajustável) |
+| Tela off (backlight + sleep) | mesmo tempo, das 21 h às 6 h |
 | Atualização do HA | ~30 s |
 | Snapshot da câmera | 1 s (ajustável, 300–10000 ms) |
 | Visor da campainha / Porta | 20 s (ajustável, 3–120 s) |
@@ -385,7 +424,7 @@ Veja [INSTALACAO.md](INSTALACAO.md). Resumo:
 
 ```bash
 . "$HOME/esp/esp-idf/export.sh"
-idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
+idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd;sdkconfig.ble" build
 idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -p PORTA flash monitor
 ```
 

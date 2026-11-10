@@ -193,8 +193,8 @@ void assistant_weather_json(char *buf, size_t buf_len)
         char t[16] = "null", h[16] = "null";
         if (ha.has_temp) snprintf(t, sizeof t, "%d", ha.temp_c);
         if (ha.has_humidity) snprintf(h, sizeof h, "%d", ha.humidity);
-        snprintf(buf, buf_len, "{\"place\":\"Casa\",\"tempC\":%s,\"humidity\":%s,\"condition\":\"%s\",\"code\":\"partly\"}",
-                 t, h, ha.status);
+        snprintf(buf, buf_len, "{\"place\":\"Casa\",\"tempC\":%s,\"humidity\":%s,\"condition\":\"%s\",\"code\":\"ha\"}",
+                 t, h, (ha.has_cond && ha.cond[0]) ? ha.cond : "indisponivel");
         return;
     }
 #endif

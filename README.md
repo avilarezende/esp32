@@ -1,6 +1,7 @@
 # esp32
 
-Firmware ESP-IDF para o **Cheap Yellow Display 2.8"** (ESP32-2432S028) e um
+Firmware ESP-IDF para o **Cheap Yellow Display 2.8"** (ESP32-2432S028, a
+placa de 1 USB com ILI9341 e a de 2 USB com ST7789 ou ILI9342) e um
 portal Wi-Fi. No boot o aparelho entra na rede salva na NVS; sem credenciais
 (ou se a conexão falha), sobe o portal `ESP32-Setup`. Com o Home Assistant na
 LAN, o painel mostra relógio, clima, dispositivos, câmera e alertas.
@@ -37,14 +38,17 @@ flash.bat COM3
 - Até 5 linhas, no formato `entidade` ou `entidade=Rótulo`. Padrão de fábrica:
   `switch.carros_switch_1=Garagem 1`, `switch.carros_switch_2=Garagem 2`,
   `switch.casa_aracaju_piscina=Piscina`, `switch.casa_ewelink_poco=Poco`.
-- Relógio Montserrat com antialiasing, gato calico em sprites RLE (respira,
-  pisca, rabo, orelha, alonga, dorme à noite no protetor, alerta no HA,
-  ronrona no toque) e splash ditherizado.
+- Relógio Montserrat com antialiasing, gato calico em sprites RLE na
+  observação (respira, pisca, rabo, orelha, alonga, alerta no HA, ronrona
+  no toque) e, no descanso diurno, um gato menor que anda e brinca. Splash
+  ditherizado.
 - Tema escuro único: barra de status (hora ou título, selo, estado do HA,
   ícone de internet), cartões arredondados para clima, dispositivos e alertas,
   botão **Porta** no mesmo canto. Faixas que não mudaram não são reenviadas
   ao painel, para o gato não piscar a tela inteira.
-- Inversão de cor **desligada** por padrão; ordem BGR opcional (vale depois de reiniciar).
+- Inversão de cor **desligada** por padrão no ILI9341 e no ST7789; ordem BGR
+  opcional (vale depois de reiniciar). O controlador (automático, ILI9341,
+  ST7789, ILI9342) fica na NVS e na seção **Tela do CYD**.
 - Ajustes da tela na NVS e na seção **Tela do CYD** (`GET`/`POST /config`).
   Inversão e brilho gravados por `POST /config` ou `POST /display` entram na
   próxima passagem da tarefa da tela (`display_task`). O servidor HTTP não
@@ -125,13 +129,28 @@ Servidor em [`main/http_server.c`](main/http_server.c), porta **80**:
 - `GET /config`, `POST /config` — ajustes da tela (NVS `app_cfg`). O que mexe
   no painel (inversão, brilho) só é aplicado na próxima passagem de `display_task`.
 - `POST /camera` — abre o visor de snapshot (exige a chave do aparelho)
-- `POST /display` — inversão, BGR e padrão de teste (exige a chave). A inversão
-  entra na próxima passagem de `display_task`; BGR só depois de reiniciar.
+- `POST /display` — inversão, BGR, controlador (`panel` = 0 automático, 1
+  ILI9341, 2 ST7789, 3 ILI9342) e padrão de teste (exige a chave). A inversão
+  entra na próxima passagem de `display_task`; BGR e o controlador só depois
+  de reiniciar. `GET /config` também devolve `panel_on` e `panel_id`.
 - `POST /alert`, `GET /alerts` — alertas do HA (POST exige a chave)
+- `GET /ble` — varredura BLE passiva (NimBLE; anúncio passivo, sem conectar). JSON com
+  `scanning`, `ble_paused`, `adv`, `heap`, `heap_min`, `spock` (`mac`, `rssi`, `age_s`,
+  `name` quando a tag `00:33:7A:DF:F3:E1` foi vista; senão `seen: false`)
+  e `devices` (até 12 anúncios recentes). O scanner continua com a tela
+  no descanso ou apagada. O pacote que o Home Assistant consome está em
+  [docs/homeassistant/cyd_ble.yaml](docs/homeassistant/cyd_ble.yaml).
+- `POST /ble?scan=0|1&key=<chave>` — desliga (`0`) ou religa (`1`) o
+  controlador BLE. `scan=0` faz deinit do NimBLE para devolver heap.
+  A mesma chave de `/ota`. `GET /config` também traz `ble_paused`.
 - `GET /touch` — última leitura do XPT2046, mais `uptime_s`, `disp_age_ms`
   (ms desde a última volta de `display_task`, ou `-1`), `reset`
   (`esp_reset_reason`) e `heap` / `heap_min`
-- `POST /ota` — atualização HTTP (exige a chave)
+- `POST /ota` — atualização HTTP (exige a chave). Antes de alocar o buffer,
+  o firmware pausa câmera, poller do HA e a sonda de internet, e desliga o
+  BLE. O corpo usa um buffer de 2 KB (ou 1 KB se faltar heap). `Expect:
+  100-continue` recebe resposta antes da leitura. Se o POST falha, o BLE
+  volta sem reboot. Se grava, a placa reinicia. Ver [INSTALACAO.md](docs/INSTALACAO.md).
 - `POST /reboot?key=<chave>` — reinicia a placa cerca de 1,5 s depois da
   resposta `{"ok":true,"reboot":true}` (exige a chave)
 - `GET /screenshot?key=<chave>` — BMP 24-bit de 320×240 (230 454 bytes),
@@ -166,8 +185,10 @@ No celular ela cresce.
 - **Casa** lista as entidades configuradas na tela.
 - **Ajustes** mostra a rede e a seção **Tela do CYD** (dispositivos, câmeras,
   brilho, cores, gato, relógio, alertas) e o envio de `esp32-ota.bin`.
-- Depois de **30 s** sem toque, o protetor cobre a página. `prefers-reduced-motion`
-  desliga a animação do gato no navegador.
+- Depois do tempo de `saver_s` sem toque (padrão de fábrica **120 s**; a
+  página usa esse valor quando `/config` responde), o protetor cobre a
+  página. `prefers-reduced-motion` desliga a animação do gato no navegador.
+  A página do celular não apaga a backlight: isso é só o painel.
 
 No primeiro uso o onboarding pergunta o hub. Endereço de exemplo, porta 80:
 `http://192.168.0.10`. O token longo vai no campo de senha.
@@ -179,7 +200,7 @@ de 1,94 MB. Quem já gravou uma imagem antiga precisa de **um último flash por
 cabo** ([INSTALACAO.md](docs/INSTALACAO.md)); as próximas trocas são `POST /ota`.
 
 ```bash
-idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
+idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd;sdkconfig.ble" build
 idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -p /dev/ttyUSB0 flash monitor
 ```
 

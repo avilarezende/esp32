@@ -5,6 +5,38 @@
 Firmware do Cheap Yellow Display 2.8" (ESP-IDF 5.3.2), em cima do portal Wi-Fi
 e da observação do Home Assistant. Testado na placa pelo autor da série.
 
+### OTA com o BLE ligado
+
+- `POST /ota` (binário ou `?url=`) pausa câmera, poller do HA e a sonda de
+  internet, faz deinit do NimBLE e só então aloca um buffer de 2 KB (1 KB
+  se não couber). `Expect: 100-continue` é respondido. Falha de OTA religa
+  o BLE sem reboot; sucesso reinicia.
+- `POST /ble?scan=0|1&key=` pausa ou religa o controlador. `GET /ble` e
+  `GET /config` expõem `ble_paused`. O `GET /ble` não faz mais malloc a
+  cada consulta.
+
+### Descanso e BLE
+
+- Scanner BLE passivo (NimBLE, janela 30 ms a cada 320 ms, sem conectar).
+  O papel central continua ligado porque o NimBLE deste ESP-IDF não compila
+  só como observador; o scan em si é `passive`.
+  `GET /ble` entrega a tag do Spock (`00:33:7A:DF:F3:E1`) e até 12 anúncios.
+  A varredura segue com a tela no descanso ou apagada. `sdkconfig.ble` entra
+  só no build da CYD (o QEMU não liga o rádio).
+- Pools do NimBLE menores que o padrão (sem papel de central/periférico, sem
+  security manager, ACL e mbufs só para anúncio). A meta é subir o heap
+  mínimo, que tinha ficado em cerca de 4 KB com o scanner anterior.
+- Sem toque por `saver_s` (padrão de fábrica **120 s**, NVS `c_saver`):
+  entre `day_start` e `day_end` (padrão **6** e **21**) o descanso mostra
+  hora grande, clima e um gato cálico de 32×22 que anda, senta e brinca.
+  Fora dessa janela a backlight apaga e o painel entra em sleep. O primeiro
+  toque só acorda.
+- Hora por SNTP em **America/Fortaleza** (UTC−3, sem horário de verão).
+  Sem sincronismo, o descanso não desenha relógio e não apaga a tela.
+- Clima pelo `POST /api/template` que já existia: primeiro `weather.*`
+  (temperatura, umidade e condição) e, se não houver, sensores de
+  temperatura/umidade. Sem dados, o cartão diz `clima indisponivel`.
+
 ### Home Assistant
 
 - O token longo cabe em **319** caracteres (antes era cortado em 63).
@@ -18,6 +50,14 @@ e da observação do Home Assistant. Testado na placa pelo autor da série.
 - `GET /devices` e `GET /weather` usam esse resumo quando o backend é o live.
 
 ### Painel
+
+- O mesmo firmware cobre a CYD de 1 USB (ILI9341) e a de 2 USB (ST7789, e
+  ILI9342 quando a geometria já está certa). A escolha fica na NVS (`c_panel`,
+  0 automático, 1 ILI9341, 2 ST7789, 3 ILI9342), na seção **Tela do CYD** e
+  em `POST /display`. O automático só sai do ILI9341 se o ID lido no MISO for
+  `858552` ou `9342`. A placa antiga, sem essa chave, continua no init
+  ILI9341 com `inv=0` e `bgr=1`. Trocar o controlador reinicia a placa. O
+  `POST /ota` existente aceita o app novo.
 
 - Tema escuro único no portal, na observação, no protetor e nos alertas:
   barra de status de 24 px, cartões arredondados, temperatura em âmbar,
@@ -55,8 +95,9 @@ e da observação do Home Assistant. Testado na placa pelo autor da série.
 - Relógio com Montserrat semibold e antialiasing (24 h por padrão).
 - Gato calico redesenhado em sprites de paleta com RLE (borda já misturada
   ao fundo escuro, sem framebuffer extra). Respira, pisca, balança o rabo,
-  mexe a orelha, alonga e boceja, dorme no protetor entre 21 h e 6 h, olha
-  para cima quando chega um alerta do HA e ronrona no toque. O tempo de
+  mexe a orelha, alonga e boceja, olha
+  para cima quando chega um alerta do HA e ronrona no toque. À noite o
+  painel apaga em vez de mostrar o gato dormindo. O tempo de
   cada pose é aleatório. O splash ditherizado da inicialização continua.
 - Inversão de cor **desligada** por padrão. A ordem BGR continua disponível e
   só passa a valer depois de reiniciar. Inversão e brilho pedidos por

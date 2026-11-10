@@ -21,6 +21,15 @@
 #define CYD_CAT_PURR    3
 #define CYD_CAT_ALERT   4
 
+/* Day-saver walker. 32x22, four poses, drawn into the current band only. */
+#define CYD_WALK_W 32
+#define CYD_WALK_H 22
+#define CYD_WALK_SCALE 2
+#define CYD_WALK_A 0
+#define CYD_WALK_B 1
+#define CYD_WALK_SIT 2
+#define CYD_WALK_POUNCE 3
+
 #define CYD_ALERT_ROWS 4
 typedef struct {
     char title[32];
@@ -68,7 +77,19 @@ typedef struct {
     int banner;      /* show newest alert banner */
     cyd_alert_row_t alerts[CYD_ALERT_ROWS];
     int alert_rows;
+    int has_cond;    /* short pt-BR weather phrase from HA weather.* */
+    char cond[16];
+    int drift;       /* saver clock nudge, a few pixels, to limit burn-in */
+    /* Walker on the day saver. play_y == 0 selects the default spot. */
+    int play_x, play_y, play_pose, play_dir;
+    int play_toy;    /* 0 none, 1 ball, 2 yarn */
+    int play_tx, play_ty;
 } cyd_scene_t;
+
+/* 1 when the idle panel should sleep (backlight off) instead of the day
+ * saver. Invalid time is never night: the saver stays up and omits the clock.
+ * A window with start >= end falls back to 06:00–21:00. `day_end` is exclusive. */
+int cyd_is_night(int time_valid, int hour, int day_start, int day_end);
 
 /* Camera quick button on the home screen (touch target, screen coords). */
 #define CYD_CAMBTN_X 252
