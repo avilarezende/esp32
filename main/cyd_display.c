@@ -68,6 +68,8 @@ static esp_lcd_panel_io_handle_t s_lcd_io;
 static spi_device_handle_t s_touch;
 static int s_sntp_started;
 static int s_screen_on = 1;
+static volatile int s_quiet;
+static volatile int s_in_cam;
 
 /* Camera viewer request (set from the HTTP task, consumed by the display task). */
 static portMUX_TYPE s_cam_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -322,6 +324,23 @@ static uint32_t hash_band(const uint16_t *p, int n)
 static void present_invalidate(void)
 {
     memset(s_band_valid, 0, sizeof s_band_valid);
+}
+
+void cyd_display_set_quiet(int on)
+{
+    s_quiet = on ? 1 : 0;
+    if (on) {
+        portENTER_CRITICAL(&s_cam_mux);
+        s_cam_secs = 0;
+        portEXIT_CRITICAL(&s_cam_mux);
+    } else {
+        present_invalidate();
+    }
+}
+
+int cyd_display_is_busy(void)
+{
+    return s_in_cam;
 }
 
 static void present(const cyd_scene_t *scene)
@@ -667,6 +686,11 @@ static void fill_black(void)
 static void run_camera(const char *entity, int secs)
 {
     ESP_LOGI(TAG, "camera %s for %ds", entity, secs);
+    s_in_cam = 1;
+    if (s_quiet) {
+        s_in_cam = 0;
+        return;
+    }
     set_screen(1);
     shot_service();
     wait_release(1500);
@@ -676,6 +700,9 @@ static void run_camera(const char *entity, int secs)
     while (esp_timer_get_time() < until) {
         int64_t t0 = esp_timer_get_time();
         s_disp_beat = t0;
+        if (s_quiet) {
+            break;
+        }
         shot_service();
         uint8_t *jpg = NULL;
         int len = 0;
@@ -687,12 +714,20 @@ static void run_camera(const char *entity, int secs)
             break;
         }
         free(jpg);
+        if (s_quiet) {
+            s_in_cam = 0;
+            present_invalidate();
+            return;
+        }
         /* ~1 frame per second; a new tap closes the viewer. */
         while ((esp_timer_get_time() - t0) < (int64_t)cyd_cfg()->cam_ms * 1000) {
             shot_service();
-            if (touch_down()) {
-                wait_release(1500);
+            if (s_quiet || touch_down()) {
+                if (!s_quiet) {
+                    wait_release(1500);
+                }
                 present_invalidate();
+                s_in_cam = 0;
                 return;
             }
             vTaskDelay(pdMS_TO_TICKS(40));
@@ -705,6 +740,7 @@ static void run_camera(const char *entity, int secs)
         portEXIT_CRITICAL(&s_cam_mux);
     }
     present_invalidate();
+    s_in_cam = 0;
 }
 
 void cyd_display_show_camera(const char *entity, int seconds)
@@ -1202,6 +1238,14 @@ static void display_task(void *arg)
 
     while (1) {
         s_disp_beat = esp_timer_get_time();
+        if (s_quiet) {
+            portENTER_CRITICAL(&s_cam_mux);
+            s_cam_secs = 0;
+            portEXIT_CRITICAL(&s_cam_mux);
+            shot_service();
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
         maybe_sntp();
         apply_pending();
         shot_service();
@@ -1463,6 +1507,8 @@ esp_err_t cyd_display_start(void)
 #include <stdio.h>
 
 void cyd_display_apply_cfg(void) {}
+void cyd_display_set_quiet(int on) { (void)on; }
+int cyd_display_is_busy(void) { return 0; }
 void cyd_touch_json(char *buf, size_t n) { if (n) snprintf(buf, n, "{}"); }
 void cyd_alert_push(const char *id, const char *title, const char *msg, int level, int secs) { (void)id; (void)title; (void)msg; (void)level; (void)secs; }
 void cyd_alert_dismiss(const char *id) { (void)id; }

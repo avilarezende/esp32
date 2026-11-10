@@ -5,6 +5,16 @@
 Firmware do Cheap Yellow Display 2.8" (ESP-IDF 5.3.2), em cima do portal Wi-Fi
 e da observação do Home Assistant. Testado na placa pelo autor da série.
 
+### OTA com o BLE ligado
+
+- `POST /ota` (binário ou `?url=`) pausa câmera, poller do HA e a sonda de
+  internet, faz deinit do NimBLE e só então aloca um buffer de 2 KB (1 KB
+  se não couber). `Expect: 100-continue` é respondido. Falha de OTA religa
+  o BLE sem reboot; sucesso reinicia.
+- `POST /ble?scan=0|1&key=` pausa ou religa o controlador. `GET /ble` e
+  `GET /config` expõem `ble_paused`. O `GET /ble` não faz mais malloc a
+  cada consulta.
+
 ### Descanso e BLE
 
 - Scanner BLE passivo (NimBLE, janela 30 ms a cada 320 ms, sem conectar).

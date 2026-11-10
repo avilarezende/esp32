@@ -41,6 +41,11 @@ typedef struct {
 /* Start the background poller (no-op when CYD is disabled). */
 esp_err_t ha_client_start(void);
 
+/* Skip HA fetches while an OTA is using the heap. pause_wait blocks until
+ * the current fetch (if any) returns. */
+void ha_client_set_paused(int paused);
+void ha_client_pause_wait(void);
+
 /* Copy the latest snapshot under the poller lock. */
 void ha_client_copy(ha_snapshot_t *out);
 

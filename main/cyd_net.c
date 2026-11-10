@@ -134,13 +134,25 @@ static void publish(int online)
     ESP_LOGI(TAG, "internet %s", online ? "ok" : "off");
 }
 
+static volatile int s_pause;
+
+void cyd_net_set_paused(int paused)
+{
+    s_pause = paused ? 1 : 0;
+}
+
 static void net_task(void *arg)
 {
     int online = 0;
     int fails = 0;
     (void)arg;
     for (;;) {
-        int link = wifi_manager_is_connected() ? 1 : 0;
+        int link;
+        if (s_pause) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
+        link = wifi_manager_is_connected() ? 1 : 0;
         int round_ok = 0;
         int next;
         if (link) {
@@ -186,6 +198,11 @@ int cyd_net_ok(void)
 esp_err_t cyd_net_start(void)
 {
     return ESP_OK;
+}
+
+void cyd_net_set_paused(int paused)
+{
+    (void)paused;
 }
 
 #endif

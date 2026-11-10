@@ -5,6 +5,7 @@
 #include "cyd_cfg.h"
 #include "cyd_panel.h"
 #include "cyd_ble.h"
+#include "cyd_net.h"
 #include "esp_ota_ops.h"
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
@@ -17,6 +18,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_system.h"
 
@@ -308,7 +310,55 @@ static esp_err_t alert_post_handler(httpd_req_t *req)
 static void alerts_json_fn(char *b, size_t n) { cyd_alerts_json(b, n); }
 static void touch_json_fn(char *b, size_t n) { cyd_touch_json(b, n); }
 static esp_err_t touch_get_handler(httpd_req_t *req) { return send_json(req, touch_json_fn, 256); }
-static esp_err_t ble_get_handler(httpd_req_t *req) { return send_json(req, cyd_ble_json, 1600); }
+/* Static so a GET /ble every 15 s does not malloc on a heap that BLE already
+ * squeezed. One httpd worker usually, but a second socket can overlap. */
+static char s_ble_json[1400];
+static SemaphoreHandle_t s_ble_json_mu;
+
+static esp_err_t ble_get_handler(httpd_req_t *req)
+{
+    if (!s_ble_json_mu) {
+        s_ble_json_mu = xSemaphoreCreateMutex();
+    }
+    if (!s_ble_json_mu || xSemaphoreTake(s_ble_json_mu, pdMS_TO_TICKS(400)) != pdTRUE) {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"busy\"}");
+    }
+    cyd_ble_json(s_ble_json, sizeof s_ble_json);
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, s_ble_json);
+    xSemaphoreGive(s_ble_json_mu);
+    return err;
+}
+
+/* POST /ble?scan=0|1&key=... tears the controller down or brings it back. */
+static esp_err_t ble_post_handler(httpd_req_t *req)
+{
+    char scan[8];
+    char msg[160];
+    esp_err_t err;
+    httpd_resp_set_type(req, "application/json");
+    if (!key_ok(req, NULL)) {
+        httpd_resp_set_status(req, "403 Forbidden");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"key\"}");
+    }
+    get_param(req, NULL, "scan", scan, sizeof scan);
+    if (scan[0] != '0' && scan[0] != '1') {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"scan\"}");
+    }
+    err = cyd_ble_set_scan(scan[0] == '1');
+    snprintf(msg, sizeof msg,
+             "{\"ok\":%s,\"ble_paused\":%s,\"heap\":%u,\"heap_min\":%u}",
+             err == ESP_OK ? "true" : "false",
+             cyd_ble_is_paused() ? "true" : "false",
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)esp_get_minimum_free_heap_size());
+    if (err != ESP_OK) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+    }
+    return httpd_resp_sendstr(req, msg);
+}
 static esp_err_t alerts_get_handler(httpd_req_t *req) { return send_json(req, alerts_json_fn, 1200); }
 
 /* ---- Settings (same LAN trust as /hub) ---- */
@@ -329,6 +379,75 @@ static esp_err_t config_post_handler(httpd_req_t *req)
 
 /* ---- OTA: POST /ota?key=.. with the raw esp32.bin, or ?url=http://.../esp32.bin ---- */
 static void reboot_soon(void *arg) { (void)arg; vTaskDelay(pdMS_TO_TICKS(1500)); esp_restart(); }
+
+/* Free the heap BLE, the HA poller and the camera are holding before the
+ * OTA buffers exist. The client that sent Expect: 100-continue is still
+ * waiting, so the body is not in lwIP yet. */
+static int ota_was_scanning;
+
+static void ota_prep(void)
+{
+    int i;
+    cyd_display_set_quiet(1);
+    for (i = 0; i < 40 && cyd_display_is_busy(); i++) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    ha_client_pause_wait();
+    cyd_net_set_paused(1);
+    ota_was_scanning = !cyd_ble_is_paused();
+    if (cyd_ble_set_scan(0) != ESP_OK) {
+        ESP_LOGW(TAG, "BLE did not stop cleanly; OTA continues");
+    }
+    ESP_LOGI(TAG, "ota prep heap=%u min=%u",
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)esp_get_minimum_free_heap_size());
+}
+
+static void ota_restore(void)
+{
+    if (ota_was_scanning) {
+        if (cyd_ble_set_scan(1) != ESP_OK) {
+            ESP_LOGW(TAG, "BLE did not resume; scan stays off until POST /ble?scan=1");
+        }
+    }
+    cyd_net_set_paused(0);
+    ha_client_set_paused(0);
+    cyd_display_set_quiet(0);
+}
+
+static int expect_continue(const char *v)
+{
+    const char *w = "100-continue";
+    if (!v) {
+        return 0;
+    }
+    for (; *w; v++, w++) {
+        char c = *v;
+        if (c >= 'A' && c <= 'Z') {
+            c = (char)(c - 'A' + 'a');
+        }
+        if (c != *w) {
+            return 0;
+        }
+    }
+    return *v == '\0';
+}
+
+/* curl sends Expect: 100-continue for a body this size and then waits.
+ * Without the interim response the first recv times out and the client
+ * sees HTTP 408 with an empty body. */
+static void ota_say_continue(httpd_req_t *req)
+{
+    char exp[32];
+    const char *msg = "HTTP/1.1 100 Continue\r\n\r\n";
+    if (httpd_req_get_hdr_value_str(req, "Expect", exp, sizeof exp) != ESP_OK) {
+        return;
+    }
+    if (!expect_continue(exp)) {
+        return;
+    }
+    httpd_send(req, msg, strlen(msg));
+}
 
 /* POST /reboot?key=.. -> restart in ~1.5 s (no unplugging after a freeze). */
 static esp_err_t reboot_post_handler(httpd_req_t *req)
@@ -427,6 +546,15 @@ static esp_err_t screenshot_get_handler(httpd_req_t *req)
     return httpd_resp_send_chunk(req, NULL, 0);
 }
 
+static esp_err_t ota_err(httpd_req_t *req, const char *why)
+{
+    char m[128];
+    ota_restore();
+    snprintf(m, sizeof m, "{\"ok\":false,\"error\":\"%s\",\"heap\":%u}",
+             why, (unsigned)esp_get_free_heap_size());
+    return httpd_resp_sendstr(req, m);
+}
+
 static esp_err_t ota_post_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json");
@@ -434,41 +562,88 @@ static esp_err_t ota_post_handler(httpd_req_t *req)
         httpd_resp_set_status(req, "403 Forbidden");
         return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"key\"}");
     }
+    /* Key is checked first so a wrong key does not drop the scanner. */
+    ota_prep();
+    ota_say_continue(req);
+
     char url[200];
     get_param(req, NULL, "url", url, sizeof url);
     if (url[0]) {
-        esp_http_client_config_t hc = { .url = url, .timeout_ms = 15000, .keep_alive_enable = true };
+        esp_http_client_config_t hc = {
+            .url = url,
+            .timeout_ms = 60000,
+            .keep_alive_enable = true,
+            .buffer_size = 1024,
+            .buffer_size_tx = 512,
+        };
         esp_https_ota_config_t oc = { .http_config = &hc };
         esp_err_t err = esp_https_ota(&oc);
         if (err != ESP_OK) {
-            char m[96]; snprintf(m, sizeof m, "{\"ok\":false,\"error\":\"%s\"}", esp_err_to_name(err));
-            return httpd_resp_sendstr(req, m);
+            return ota_err(req, esp_err_to_name(err));
         }
         httpd_resp_sendstr(req, "{\"ok\":true,\"reboot\":true}");
-        xTaskCreate(reboot_soon, "ota_rb", 2048, NULL, 5, NULL);
+        if (xTaskCreate(reboot_soon, "ota_rb", 2048, NULL, 5, NULL) != pdPASS) {
+            esp_restart();
+        }
         return ESP_OK;
     }
     const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
     if (!part || req->content_len <= 0 || (size_t)req->content_len > part->size) {
         httpd_resp_set_status(req, "400 Bad Request");
-        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"size/partition\"}");
+        return ota_err(req, "size/partition");
     }
     esp_ota_handle_t h;
-    if (esp_ota_begin(part, req->content_len, &h) != ESP_OK) return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"begin\"}");
-    char *buf = malloc(4096);
-    int left = req->content_len, ok = buf != NULL;
+    if (esp_ota_begin(part, req->content_len, &h) != ESP_OK) {
+        return ota_err(req, "begin");
+    }
+    /* 2 KB, then 1 KB. Allocated only after BLE is down. */
+    int chunk = 2048;
+    uint8_t *buf = malloc(2048);
+    const char *why = "write";
+    if (!buf) {
+        chunk = 1024;
+        buf = malloc(1024);
+    }
+    if (!buf) {
+        why = "oom";
+    }
+    int left = req->content_len;
+    int ok = buf != NULL;
+    int timeouts = 0;
     while (ok && left > 0) {
-        int r = httpd_req_recv(req, buf, left < 4096 ? left : 4096);
-        if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
-        if (r <= 0 || esp_ota_write(h, buf, r) != ESP_OK) { ok = 0; break; }
+        int want = left < chunk ? left : chunk;
+        int r = httpd_req_recv(req, (char *)buf, want);
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) {
+            if (++timeouts > 4) {
+                ok = 0;
+                break;
+            }
+            continue;
+        }
+        timeouts = 0;
+        if (r <= 0 || esp_ota_write(h, buf, r) != ESP_OK) {
+            ok = 0;
+            break;
+        }
         left -= r;
     }
     free(buf);
-    if (!ok) { esp_ota_abort(h); return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"write\"}"); }
-    if (esp_ota_end(h) != ESP_OK || esp_ota_set_boot_partition(part) != ESP_OK)
-        return httpd_resp_sendstr(req, "{\"ok\":false,\"error\":\"image invalida\"}");
-    httpd_resp_sendstr(req, "{\"ok\":true,\"reboot\":true}");
-    xTaskCreate(reboot_soon, "ota_rb", 2048, NULL, 5, NULL);
+    if (!ok) {
+        esp_ota_abort(h);
+        return ota_err(req, why);
+    }
+    if (esp_ota_end(h) != ESP_OK || esp_ota_set_boot_partition(part) != ESP_OK) {
+        return ota_err(req, "image invalida");
+    }
+    {
+        char m[96];
+        snprintf(m, sizeof m, "{\"ok\":true,\"reboot\":true,\"heap\":%u}",
+                 (unsigned)esp_get_free_heap_size());
+        httpd_resp_sendstr(req, m);
+    }
+    if (xTaskCreate(reboot_soon, "ota_rb", 2048, NULL, 5, NULL) != pdPASS) {
+        esp_restart();
+    }
     return ESP_OK;
 }
 
@@ -600,7 +775,9 @@ httpd_handle_t http_config_server_start(void)
     /* Chat proxies to HA (TLS-free HTTP client + JSON buffers): needs more stack. */
     config.stack_size = 10240;
     config.lru_purge_enable = true;
-    config.max_uri_handlers = 24;
+    config.max_uri_handlers = 28;
+    /* A 1.5 MB image on a slow LAN must not die between chunks. */
+    config.recv_wait_timeout = 30;
 
     if (httpd_start(&server, &config) != ESP_OK) {
         return NULL;
@@ -625,6 +802,7 @@ httpd_handle_t http_config_server_start(void)
         { .uri = "/alerts",       .method = HTTP_GET,  .handler = alerts_get_handler },
         { .uri = "/touch",        .method = HTTP_GET,  .handler = touch_get_handler },
         { .uri = "/ble",          .method = HTTP_GET,  .handler = ble_get_handler },
+        { .uri = "/ble",          .method = HTTP_POST, .handler = ble_post_handler },
         { .uri = "/config",       .method = HTTP_GET,  .handler = config_get_handler },
         { .uri = "/config",       .method = HTTP_POST, .handler = config_post_handler },
         { .uri = "/ota",          .method = HTTP_POST, .handler = ota_post_handler },

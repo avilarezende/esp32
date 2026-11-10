@@ -1,5 +1,6 @@
 #include "cyd_cfg.h"
 #include "cyd_panel.h"
+#include "cyd_ble.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -143,10 +144,11 @@ void cyd_cfg_json(char *buf, size_t len)
              "\"cam_ms\":%u,\"inv\":%u,\"bgr\":%u,\"bright\":%u,\"saver_s\":%u,\"day_start\":%u,\"day_end\":%u,"
              "\"cat\":%u,\"clk24\":%u,"
              "\"alerts\":%u,\"net_url\":\"%s\",\"btn_label\":\"%s\",\"btn_icon\":%u,"
-             "\"panel\":%u,\"panel_on\":%u,\"panel_id\":\"%s\"}",
+             "\"panel\":%u,\"panel_on\":%u,\"panel_id\":\"%s\",\"ble_paused\":%s}",
              e, c->pets, b, q, c->bell_secs, c->cam_ms, (unsigned)cyd_cfg_inv_effective(), c->bgr,
              c->bright, c->saver_s, c->day_start, c->day_end, c->cat, c->clk24, c->alerts, n, l, c->btn_icon,
-             c->panel, (unsigned)s_panel_on, s_panel_id);
+             c->panel, (unsigned)s_panel_on, s_panel_id,
+             cyd_ble_is_paused() ? "true" : "false");
 }
 
 void cyd_cfg_note_panel(int resolved, const char *id_hex)

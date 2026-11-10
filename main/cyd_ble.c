@@ -41,8 +41,9 @@ typedef struct {
 static SemaphoreHandle_t s_mu;
 static dev_t s_devs[DEV_MAX];
 static dev_t s_spock;
-static int s_scanning;
-static int s_started;
+static volatile int s_scanning;
+static volatile int s_started;
+static volatile int s_hold; /* do not restart the scan; stack may be down */
 static uint32_t s_adv;
 
 static void mac_from_nimble(uint8_t out[6], const uint8_t val[6])
@@ -146,8 +147,11 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         return 0;
     }
     if (event->type == BLE_GAP_EVENT_DISC_COMPLETE) {
-        ESP_LOGW(TAG, "scan ended reason=%d, restarting", event->disc_complete.reason);
         s_scanning = 0;
+        if (s_hold) {
+            return 0;
+        }
+        ESP_LOGW(TAG, "scan ended reason=%d, restarting", event->disc_complete.reason);
         start_scan();
     }
     return 0;
@@ -186,7 +190,9 @@ static void on_sync(void)
         ESP_LOGE(TAG, "no BLE address: %d", rc);
         return;
     }
-    start_scan();
+    if (!s_hold) {
+        start_scan();
+    }
 }
 
 static void host_task(void *param)
@@ -218,6 +224,60 @@ esp_err_t cyd_ble_start(void)
              (unsigned)esp_get_free_heap_size(),
              (unsigned)esp_get_minimum_free_heap_size());
     return ESP_OK;
+}
+
+/* Stop the host task, then free the controller. Called from the HTTP task.
+ * nimble_port_stop waits until the host has left nimble_port_run; the host
+ * task then deletes itself, so wait a moment before tearing the controller down. */
+static esp_err_t ble_down(void)
+{
+    esp_err_t err;
+    if (!s_started) {
+        s_scanning = 0;
+        return ESP_OK;
+    }
+    s_hold = 1;
+    if (s_scanning) {
+        ble_gap_disc_cancel();
+    }
+    int rc = nimble_port_stop();
+    if (rc != 0) {
+        ESP_LOGW(TAG, "nimble_port_stop: %d", rc);
+        return ESP_FAIL;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+    err = nimble_port_deinit();
+    s_started = 0;
+    s_scanning = 0;
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "nimble_port_deinit: %s", esp_err_to_name(err));
+        return err;
+    }
+    ESP_LOGI(TAG, "BLE stopped, heap=%u min=%u",
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)esp_get_minimum_free_heap_size());
+    return ESP_OK;
+}
+
+esp_err_t cyd_ble_set_scan(int on)
+{
+    if (!on) {
+        s_hold = 1;
+        return ble_down();
+    }
+    s_hold = 0;
+    if (!s_started) {
+        return cyd_ble_start();
+    }
+    if (!s_scanning) {
+        return start_scan() == 0 ? ESP_OK : ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+int cyd_ble_is_paused(void)
+{
+    return s_hold ? 1 : 0;
 }
 
 static int write_dev(char *buf, size_t n, const dev_t *d, int64_t now)
@@ -258,8 +318,8 @@ void cyd_ble_json(char *buf, size_t n)
     }
 
     o += (size_t)snprintf(buf + o, n - o,
-        "{\"ok\":true,\"scanning\":%s,\"adv\":%u,\"heap\":%u,\"heap_min\":%u,\"spock\":",
-        scanning ? "true" : "false", (unsigned)adv,
+        "{\"ok\":true,\"scanning\":%s,\"ble_paused\":%s,\"adv\":%u,\"heap\":%u,\"heap_min\":%u,\"spock\":",
+        scanning ? "true" : "false", s_hold ? "true" : "false", (unsigned)adv,
         (unsigned)esp_get_free_heap_size(),
         (unsigned)esp_get_minimum_free_heap_size());
     if (o >= n) {
@@ -316,13 +376,24 @@ esp_err_t cyd_ble_start(void)
     return ESP_ERR_NOT_SUPPORTED;
 }
 
+esp_err_t cyd_ble_set_scan(int on)
+{
+    (void)on;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+int cyd_ble_is_paused(void)
+{
+    return 1;
+}
+
 void cyd_ble_json(char *buf, size_t n)
 {
     if (!n) {
         return;
     }
     snprintf(buf, n,
-             "{\"ok\":true,\"scanning\":false,\"adv\":0,\"heap\":0,\"heap_min\":0,"
+             "{\"ok\":true,\"scanning\":false,\"ble_paused\":true,\"adv\":0,\"heap\":0,\"heap_min\":0,"
              "\"spock\":{\"mac\":\"00:33:7A:DF:F3:E1\",\"seen\":false},\"count\":0,\"devices\":[]}");
 }
 

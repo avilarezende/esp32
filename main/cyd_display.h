@@ -20,6 +20,12 @@ void cyd_display_set_color(int invert, int bgr, int test);
 /* Ask display_task to re-apply cyd_cfg() (inversion, brightness). */
 void cyd_display_apply_cfg(void);
 
+/* Stop the camera viewer and the cat animation so OTA is the only thing
+ * allocating. The display task keeps its watchdog heartbeat. */
+void cyd_display_set_quiet(int on);
+/* 1 while a camera snapshot download is in progress. */
+int cyd_display_is_busy(void);
+
 /* Alerts shown as banner + badge; level 0 info, 1 warning, 2 critical;
  * secs 0 = until dismissed. Same id replaces. dismiss(NULL/"") clears all. */
 void cyd_alert_push(const char *id, const char *title, const char *msg, int level, int secs);

@@ -149,6 +149,30 @@ artefato `release`.
    Também aceita `POST /ota?key=...&url=http://servidor/esp32-ota.bin`
    (HTTP, não HTTPS: `CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP`).
 
+Com o scanner BLE ligado o heap fica curto. Os dois modos de `/ota` fazem
+o mesmo preparo **antes** de alocar buffer:
+
+1. A câmera para, o poller do HA e a sonda de internet pausam.
+2. O scan para e o NimBLE/controlador saem da memória (`deinit`).
+3. Só então entra o buffer de recepção (2 KB, ou 1 KB). O timeout de
+   `recv` do servidor é 30 s. Um `Expect: 100-continue` (o curl manda isso
+   num corpo grande) recebe `HTTP/1.1 100 Continue` antes da leitura.
+4. Se a gravação falha, o BLE e o resto voltam **sem** reboot. Se dá certo,
+   a placa reinicia e o scanner sobe de novo no boot.
+
+Dá para pausar o rádio na mão, com a mesma chave, e olhar o heap:
+
+```bash
+curl -X POST "http://IP_DO_CYD/ble?scan=0&key=SUA_CHAVE_16"
+curl -s "http://IP_DO_CYD/ble"
+curl -X POST "http://IP_DO_CYD/ble?scan=1&key=SUA_CHAVE_16"
+```
+
+`GET /ble` e `GET /config` trazem `ble_paused`. Durante o OTA o heap livre
+deve subir para a faixa em que a placa ficava **sem** o controlador (dezenas
+de KB acima dos ~20–35 KB do scan). O mínimo histórico (`heap_min`) não desce:
+ele só registra o pior valor desde o boot.
+
 O CYD grava o outro slot (`ota_0` ↔ `ota_1`), marca essa imagem para boot e
 reinicia. O rollback está ligado: se a imagem nova **não** ficar 60 segundos
 com Wi-Fi associado, o próximo reboot volta para o slot anterior. Não desligue

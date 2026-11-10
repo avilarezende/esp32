@@ -1,6 +1,8 @@
 # CYD 1 (192.168.31.227) e CYD 2 (192.168.31.93) como rastreadores BLE passivos.
 # Os painéis rodam firmware próprio (ESP-IDF), não ESPHome; o scanner é GET /ble
-# (varredura passiva 320/30 ms, igual ao StickS3). Bermuda segue com o dongle
+# (varredura passiva 320/30 ms, igual ao StickS3). GET /ble também traz
+# ble_paused (true enquanto o OTA ou POST /ble?scan=0 derrubou o controlador);
+# os templates abaixo ignoram esse campo. Bermuda segue com o dongle
 # hci0 e o StickS3. Estes sensores entram na presença local do Spock.
 # Backup: /config/backups_alfred/cyd-ble-20261109-2340/
 

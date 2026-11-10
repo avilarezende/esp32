@@ -135,15 +135,22 @@ Servidor em [`main/http_server.c`](main/http_server.c), porta **80**:
   de reiniciar. `GET /config` também devolve `panel_on` e `panel_id`.
 - `POST /alert`, `GET /alerts` — alertas do HA (POST exige a chave)
 - `GET /ble` — varredura BLE passiva (NimBLE; anúncio passivo, sem conectar). JSON com
-  `scanning`, `adv`, `heap`, `heap_min`, `spock` (`mac`, `rssi`, `age_s`,
+  `scanning`, `ble_paused`, `adv`, `heap`, `heap_min`, `spock` (`mac`, `rssi`, `age_s`,
   `name` quando a tag `00:33:7A:DF:F3:E1` foi vista; senão `seen: false`)
   e `devices` (até 12 anúncios recentes). O scanner continua com a tela
   no descanso ou apagada. O pacote que o Home Assistant consome está em
   [docs/homeassistant/cyd_ble.yaml](docs/homeassistant/cyd_ble.yaml).
+- `POST /ble?scan=0|1&key=<chave>` — desliga (`0`) ou religa (`1`) o
+  controlador BLE. `scan=0` faz deinit do NimBLE para devolver heap.
+  A mesma chave de `/ota`. `GET /config` também traz `ble_paused`.
 - `GET /touch` — última leitura do XPT2046, mais `uptime_s`, `disp_age_ms`
   (ms desde a última volta de `display_task`, ou `-1`), `reset`
   (`esp_reset_reason`) e `heap` / `heap_min`
-- `POST /ota` — atualização HTTP (exige a chave)
+- `POST /ota` — atualização HTTP (exige a chave). Antes de alocar o buffer,
+  o firmware pausa câmera, poller do HA e a sonda de internet, e desliga o
+  BLE. O corpo usa um buffer de 2 KB (ou 1 KB se faltar heap). `Expect:
+  100-continue` recebe resposta antes da leitura. Se o POST falha, o BLE
+  volta sem reboot. Se grava, a placa reinicia. Ver [INSTALACAO.md](docs/INSTALACAO.md).
 - `POST /reboot?key=<chave>` — reinicia a placa cerca de 1,5 s depois da
   resposta `{"ok":true,"reboot":true}` (exige a chave)
 - `GET /screenshot?key=<chave>` — BMP 24-bit de 320×240 (230 454 bytes),

@@ -477,6 +477,23 @@ static esp_err_t fetch_once(ha_snapshot_t *out)
     return ESP_OK;
 }
 
+static volatile int s_pause;
+static volatile int s_busy;
+
+void ha_client_set_paused(int paused)
+{
+    s_pause = paused ? 1 : 0;
+}
+
+void ha_client_pause_wait(void)
+{
+    int i;
+    s_pause = 1;
+    for (i = 0; i < 60 && s_busy; i++) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+}
+
 static void ha_task(void *arg)
 {
     (void)arg;
@@ -488,9 +505,15 @@ static void ha_task(void *arg)
             esp_ota_mark_app_valid_cancel_rollback();   /* new OTA image survived 60 s with Wi-Fi */
             marked = 1;
         }
+        if (s_pause) {
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
         if (wifi_manager_is_connected()) {
             ha_snapshot_t next;
+            s_busy = 1;
             esp_err_t err = fetch_once(&next);
+            s_busy = 0;
             snap_lock();
             if (err == ESP_OK || next.configured) {
                 s_snap = next;

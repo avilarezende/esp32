@@ -10,3 +10,6 @@ int cyd_net_ok(void);
 
 /* Start the probe task. No-op when the CYD panel is not in this build. */
 esp_err_t cyd_net_start(void);
+
+/* Skip the HTTP 204 probes while an OTA is using the heap. */
+void cyd_net_set_paused(int paused);
