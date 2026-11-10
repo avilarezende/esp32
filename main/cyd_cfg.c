@@ -61,7 +61,15 @@ void cyd_cfg_load(void)
     n.panel = gu8(h, "c_panel", CYD_PANEL_AUTO);
     if (n.panel > CYD_PANEL_ILI9342) n.panel = CYD_PANEL_AUTO;
     n.bright = gu8(h, "c_bright", 100);
-    n.saver_s = gu16(h, "c_saver", 30);
+    n.saver_s = gu16(h, "c_saver", 120);
+    n.day_start = gu8(h, "c_day0", 6);
+    n.day_end = gu8(h, "c_day1", 21);
+    if (n.day_start > 23) n.day_start = 6;
+    if (n.day_end > 23) n.day_end = 21;
+    if (n.day_start >= n.day_end) {
+        n.day_start = 6;
+        n.day_end = 21;
+    }
     n.cat = gu8(h, "c_cat", 1);
     n.clk24 = gu8(h, "c_clk24", 1);
     n.alerts = gu8(h, "c_alerts", 1);
@@ -108,6 +116,7 @@ void cyd_cfg_set_form(const char *body)
         {"pets", "c_pets", 0, 1}, {"bell_secs", "c_bsecs", 3, 120}, {"inv", "disp_inv", 0, 1},
         {"bgr", "disp_bgr", 0, 1}, {"panel", "c_panel", 0, 3}, {"bright", "c_bright", 5, 100}, {"cat", "c_cat", 0, 1},
         {"clk24", "c_clk24", 0, 1}, {"alerts", "c_alerts", 0, 1}, {"btn_icon", "c_bicon", 0, 1},
+        {"day_start", "c_day0", 0, 23}, {"day_end", "c_day1", 0, 23},
     };
     for (size_t i = 0; i < sizeof u8s / sizeof u8s[0]; i++) {
         if (wifi_form_get_field(body, u8s[i].f, v, sizeof v) && v[0])
@@ -131,11 +140,12 @@ void cyd_cfg_json(char *buf, size_t len)
     wifi_form_json_escape(c->net_url, n, sizeof n);
     snprintf(buf, len,
              "{\"ents\":\"%s\",\"pets\":%u,\"cam_bell\":\"%s\",\"cam_quick\":\"%s\",\"bell_secs\":%u,"
-             "\"cam_ms\":%u,\"inv\":%u,\"bgr\":%u,\"bright\":%u,\"saver_s\":%u,\"cat\":%u,\"clk24\":%u,"
+             "\"cam_ms\":%u,\"inv\":%u,\"bgr\":%u,\"bright\":%u,\"saver_s\":%u,\"day_start\":%u,\"day_end\":%u,"
+             "\"cat\":%u,\"clk24\":%u,"
              "\"alerts\":%u,\"net_url\":\"%s\",\"btn_label\":\"%s\",\"btn_icon\":%u,"
              "\"panel\":%u,\"panel_on\":%u,\"panel_id\":\"%s\"}",
              e, c->pets, b, q, c->bell_secs, c->cam_ms, (unsigned)cyd_cfg_inv_effective(), c->bgr,
-             c->bright, c->saver_s, c->cat, c->clk24, c->alerts, n, l, c->btn_icon,
+             c->bright, c->saver_s, c->day_start, c->day_end, c->cat, c->clk24, c->alerts, n, l, c->btn_icon,
              c->panel, (unsigned)s_panel_on, s_panel_id);
 }
 

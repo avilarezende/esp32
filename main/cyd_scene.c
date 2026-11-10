@@ -11,6 +11,18 @@ static uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
     return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
 
+int cyd_is_night(int time_valid, int hour, int day_start, int day_end)
+{
+    if (!time_valid || hour < 0 || hour > 23) {
+        return 0;
+    }
+    if (day_start < 0 || day_start > 23 || day_end < 0 || day_end > 23 || day_start >= day_end) {
+        day_start = 6;
+        day_end = 21;
+    }
+    return hour < day_start || hour >= day_end;
+}
+
 typedef struct {
     uint16_t *band;
     int y0;
@@ -1149,7 +1161,7 @@ static void paint_home(canvas_t *c, const cyd_scene_t *scene)
         }
     }
 
-    text_center(c, 222, 1, "40 min sem toque: tela off", c->muted);
+    text_center(c, 222, 1, "inativo: descanso; noite apaga", c->muted);
     if (scene->cam_btn) {
         cam_button(c);
     }
@@ -1170,59 +1182,139 @@ static void paint_saver_bar(canvas_t *c, const cyd_scene_t *scene)
     paint_wifi(c, scene->net_state, scene->net_frame);
 }
 
-static void paint_glance_card(canvas_t *c, const cyd_scene_t *scene)
+#include "cyd_walk.inc"
+
+static void blit_walk(canvas_t *c, int pose, int dir, int ox, int oy)
+{
+    int y;
+    const char (*frame)[CYD_WALK_W + 1];
+    uint16_t eye = rgb565(96, 168, 72);
+    if (pose < 0 || pose > 3) {
+        pose = 0;
+    }
+    if (oy + CYD_WALK_H * CYD_WALK_SCALE <= c->y0 || oy >= c->y0 + c->bh) {
+        return;
+    }
+    frame = CYD_WALK[pose];
+    for (y = 0; y < CYD_WALK_H * CYD_WALK_SCALE; y++) {
+        int sy = oy + y;
+        int x;
+        int sy_src = y / CYD_WALK_SCALE;
+        uint16_t *dst;
+        if (sy < c->y0 || sy >= c->y0 + c->bh || sy >= CYD_H) {
+            continue;
+        }
+        dst = c->band + (sy - c->y0) * CYD_W;
+        for (x = 0; x < CYD_WALK_W * CYD_WALK_SCALE; x++) {
+            int sx_src = x / CYD_WALK_SCALE;
+            int sx = dir < 0 ? (CYD_WALK_W - 1 - sx_src) : sx_src;
+            int px = ox + x;
+            char ch;
+            uint16_t col;
+            if ((unsigned)px >= CYD_W) {
+                continue;
+            }
+            ch = frame[sy_src][sx];
+            if (ch == '.' || ch == ' ') {
+                continue;
+            }
+            if (ch == 'o' || ch == 'O') {
+                col = c->orange;
+            } else if (ch == 'k' || ch == 'K') {
+                col = c->black;
+            } else if (ch == 'p' || ch == 'P') {
+                col = c->pink;
+            } else if (ch == 'g' || ch == 'G') {
+                col = eye;
+            } else {
+                col = c->cream;
+            }
+            dst[px] = col;
+        }
+    }
+}
+
+static void blit_toy(canvas_t *c, int kind, int x, int y)
+{
+    if (kind == 1) {
+        fill_disc(c, x, y, 5, c->orange);
+        fill_disc(c, x - 1, y - 1, 2, c->cream);
+        fill_rect(c, x - 5, y, 11, 1, c->black);
+    } else if (kind == 2) {
+        fill_disc(c, x, y, 6, c->orange);
+        fill_disc(c, x + 2, y - 2, 3, c->cream);
+        fill_rect(c, x + 4, y + 3, 10, 1, c->orange);
+        fill_rect(c, x + 13, y + 3, 1, 5, c->orange);
+    }
+}
+
+static void paint_saver_weather(canvas_t *c, const cyd_scene_t *scene)
 {
     int x = 16;
     int y = 86;
     int w = CYD_W - 32;
-    int h = 40;
-    char left[8];
-    char right[8];
-    int lw;
-    int rw;
-    int gap = 14;
-    int pair;
-    int ty;
-    weather_text(left, right, scene->temp_c, scene->humidity);
-    lw = text_px(left, 2);
-    rw = text_px(right, 2);
-    pair = lw + gap + rw;
-    ty = y + (h - 16) / 2;
+    int h = 48;
+    char temp[8];
+    char hum[8];
+    temp[0] = '\0';
+    hum[0] = '\0';
     fill_round(c, x, y, w, h, 8, c->card);
-    if (scene->place[0]) {
-        int scale = 2;
-        int pw = text_px(scene->place, 2);
-        int room = w - 28 - pair;
-        int rx = x + w - 12 - pair;
-        if (pw > room) {
-            scale = 1;
-            pw = text_px(scene->place, 1);
+    if (!scene->has_temp && !scene->has_humidity && !scene->has_cond) {
+        text(c, x + 12, y + 16, 1, "clima indisponivel", c->muted);
+        return;
+    }
+    if (scene->has_temp) {
+        snprintf(temp, sizeof temp, "%dc", scene->temp_c);
+        text(c, x + 12, y + 6, 2, temp, c->warm);
+    }
+    if (scene->has_humidity) {
+        int hw;
+        snprintf(hum, sizeof hum, "%d%%", scene->humidity);
+        hw = text_px(hum, 2);
+        text(c, x + w - hw - 12, y + 6, 2, hum, c->cool);
+    }
+    if (scene->has_cond && scene->cond[0]) {
+        int cw = text_px(scene->cond, 1);
+        int cx = x + (w - cw) / 2;
+        if (cx < x + 8) {
+            cx = x + 8;
         }
-        text(c, x + 12, y + (h - 8 * scale) / 2, scale, scene->place, c->white);
-        if (x + 12 + pw + 8 < rx) {
-            fill_rect(c, rx - 8, y + 10, 1, h - 20, c->line);
-        }
-        text(c, rx, ty, 2, left, c->warm);
-        text(c, rx + lw + gap, ty, 2, right, c->cool);
-    } else {
-        int rx = x + (w - pair) / 2;
-        text(c, rx, ty, 2, left, c->warm);
-        text(c, rx + lw + gap, ty, 2, right, c->cool);
+        text(c, cx, y + 30, 1, scene->cond, c->white);
     }
 }
 
 static void paint_saver(canvas_t *c, const cyd_scene_t *scene)
 {
-    char hhmm[6];
-    format_hhmm(scene, hhmm);
+    int drift = scene->drift;
     paint_saver_bar(c, scene);
-    aa_center(c, 32, 1, hhmm, c->white);
-    paint_glance_card(c, scene);
-    if (scene->cat_on) {
-        /* Native 96x88 sprite, centred under the weather card. */
-        kitten_act(c, 112, 132, 1, 1, scene);
+    if (drift > 4) {
+        drift = 4;
     }
-    text_center(c, 226, 1, "toque na tela", c->muted);
+    if (drift < -4) {
+        drift = -4;
+    }
+    /* No SNTP yet: leave the clock off rather than paint a bogus time. */
+    if (scene->time_valid) {
+        char hhmm[6];
+        format_hhmm(scene, hhmm);
+        aa_center(c, 30 + drift, 1, hhmm, c->white);
+    }
+    paint_saver_weather(c, scene);
+    if (scene->cat_on) {
+        int x = scene->play_x;
+        int y = scene->play_y;
+        int pose = scene->play_pose;
+        if (y <= 0) {
+            x = 120;
+            y = 168;
+            pose = CYD_WALK_A;
+        }
+        if (scene->play_toy) {
+            blit_toy(c, scene->play_toy, scene->play_tx, scene->play_ty);
+        }
+        blit_walk(c, pose, scene->play_dir, x, y);
+    }
+    text_center(c, 226, 1, "toque para voltar", c->muted);
     alert_banner(c, scene);
 }
 

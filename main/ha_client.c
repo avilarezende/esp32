@@ -293,6 +293,7 @@ __attribute__((unused)) static void build_url(char *url, size_t url_len, const c
 }
 
 #include "cyd_cfg.h"
+#include "cyd_weather.h"
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
 
@@ -307,7 +308,8 @@ static int build_summary_body(char *out, size_t n)
         "{%- set hs = states.sensor|selectattr('attributes.device_class','eq','humidity')|rejectattr('state','in',['unknown','unavailable'])|list -%}"
         "{%- set w = states.weather|list -%}"
         "T|{{ (w[0].attributes.temperature if w and w[0].attributes.temperature is number else (ts[0].state if ts else '')) }}|"
-        "{{ (w[0].attributes.humidity if w and w[0].attributes.humidity is number else (hs[0].state if hs else '')) }}"
+        "{{ (w[0].attributes.humidity if w and w[0].attributes.humidity is number else (hs[0].state if hs else '')) }}|"
+        "{{ (w[0].state if w and w[0].state not in ['unknown','unavailable','none'] else '') }}"
         "{% for e in [");
     /* entity ids: only [a-z0-9_.] survive, so nothing can break the template */
     const char *p = cfg->ents;
@@ -351,6 +353,24 @@ static int build_summary_body(char *out, size_t n)
     return r;
 }
 
+/* strtok collapses empty fields, which would hide a missing humidity
+ * in "T|23||sunny". Keep the blanks. */
+static int split_bars(char *line, char **f, int max)
+{
+    int n = 0;
+    if (max < 1) {
+        return 0;
+    }
+    f[n++] = line;
+    for (char *p = line; *p && n < max; p++) {
+        if (*p == '|') {
+            *p = '\0';
+            f[n++] = p + 1;
+        }
+    }
+    return n;
+}
+
 static void parse_summary(ha_snapshot_t *s, char *body)
 {
     char *save = NULL;
@@ -358,6 +378,21 @@ static void parse_summary(ha_snapshot_t *s, char *body)
         char *f[4] = {0};
         int n = 0;
         char *sv2 = NULL;
+        if (line[0] == 'T' && line[1] == '|') {
+            n = split_bars(line, f, 4);
+            if (n >= 2 && f[1] && f[1][0] && (isdigit((unsigned char)f[1][0]) || f[1][0] == '-')) {
+                s->temp_c = (int)lroundf(strtof(f[1], NULL));
+                s->has_temp = 1;
+            }
+            if (n >= 3 && f[2] && f[2][0] && isdigit((unsigned char)f[2][0])) {
+                s->humidity = (int)lroundf(strtof(f[2], NULL));
+                s->has_humidity = 1;
+            }
+            if (n >= 4 && f[3] && cyd_weather_phrase(f[3], s->cond, sizeof s->cond)) {
+                s->has_cond = 1;
+            }
+            continue;
+        }
         for (char *p = strtok_r(line, "|", &sv2); p && n < 4; p = strtok_r(NULL, "|", &sv2)) f[n++] = p;
         if (n >= 2 && strcmp(f[0], "T") == 0) {
             if (f[1] && f[1][0] && (isdigit((unsigned char)f[1][0]) || f[1][0] == '-')) { s->temp_c = (int)lroundf(strtof(f[1], NULL)); s->has_temp = 1; }

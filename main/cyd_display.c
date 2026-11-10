@@ -60,7 +60,8 @@ static const char *TAG = "cyd";
 #define TOUCH_HOST SPI3_HOST
 #define BAND_H     20
 #define SAVER_MS   ((int64_t)cyd_cfg()->saver_s * 1000LL)
-#define SLEEP_MS   (40LL * 60LL * 1000LL)
+#define PLAY_FLOOR 168
+#define PLAY_DW (CYD_WALK_W * CYD_WALK_SCALE)
 
 static esp_lcd_panel_handle_t s_panel;
 static esp_lcd_panel_io_handle_t s_lcd_io;
@@ -358,10 +359,27 @@ static void set_screen(int on)
         return;
     }
     s_screen_on = on;
-    if (s_panel) {
-        esp_lcd_panel_disp_on_off(s_panel, on);
+    if (!on) {
+        bl_set(0);
     }
-    bl_set(on);
+    if (s_panel) {
+        if (on) {
+            /* SLPOUT, then DISPON. The driver waits 120 ms after sleep-out. */
+            if (esp_lcd_panel_disp_sleep(s_panel, false) != ESP_OK) {
+                ESP_LOGW(TAG, "panel sleep-out failed");
+            }
+            esp_lcd_panel_disp_on_off(s_panel, true);
+        } else {
+            esp_lcd_panel_disp_on_off(s_panel, false);
+            if (esp_lcd_panel_disp_sleep(s_panel, true) != ESP_OK) {
+                ESP_LOGW(TAG, "panel sleep-in failed");
+            }
+        }
+    }
+    if (on) {
+        bl_set(1);
+        present_invalidate();
+    }
     ESP_LOGI(TAG, "panel %s", on ? "on" : "sleep");
 }
 
@@ -379,6 +397,10 @@ static void fill_from_ha(cyd_scene_t *scene)
         scene->humidity = ha.humidity;
         scene->has_humidity = 1;
     }
+    if (ha.has_cond && ha.cond[0]) {
+        scene->has_cond = 1;
+        snprintf(scene->cond, sizeof scene->cond, "%s", ha.cond);
+    }
     scene->row_count = ha.device_count;
     if (scene->row_count > CYD_ROW_MAX) {
         scene->row_count = CYD_ROW_MAX;
@@ -395,12 +417,15 @@ static void maybe_sntp(void)
     if (s_sntp_started || !wifi_manager_is_connected()) {
         return;
     }
+    /* America/Fortaleza is UTC-3 all year (no DST). The POSIX form avoids
+     * pulling the zoneinfo table into the image. */
     setenv("TZ", "<-03>3", 1);
     tzset();
     esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    cfg.wait_for_sync = false;
     if (esp_netif_sntp_init(&cfg) == ESP_OK) {
         s_sntp_started = 1;
-        ESP_LOGI(TAG, "SNTP started (America/Sao_Paulo, UTC-3)");
+        ESP_LOGI(TAG, "SNTP America/Fortaleza (UTC-3, sem horario de verao)");
     }
 }
 
@@ -1019,6 +1044,144 @@ void cyd_display_shot_end(void)
     }
 }
 
+/* Day-saver cat. State lives here so the painter stays a pure function of
+ * the scene (host tests paint one frame at a time). */
+static int play_inited;
+static int play_x, play_y, play_dir, play_pose, play_act, play_left, play_bat;
+static int play_toy, play_tx, play_ty;
+
+static void play_begin(int act, int turn)
+{
+    play_act = act;
+    play_bat = 0;
+    play_y = PLAY_FLOOR;
+    if (play_dir == 0) {
+        play_dir = 1;
+    }
+    if (turn && (esp_random() & 1)) {
+        play_dir = -play_dir;
+    }
+    if (act == 0) {
+        play_left = 10 + (int)(esp_random() % 14);
+        play_toy = 0;
+        play_pose = CYD_WALK_A;
+    } else if (act == 1) {
+        play_left = 8 + (int)(esp_random() % 10);
+        play_pose = CYD_WALK_SIT;
+        play_toy = 0;
+    } else {
+        int span = 40 + (int)(esp_random() % 48);
+        play_toy = (act == 2) ? 1 : 2;
+        play_left = 16 + (int)(esp_random() % 8);
+        play_tx = play_x + (PLAY_DW / 2) + play_dir * span;
+        if (play_tx < 12 || play_tx > CYD_W - 12) {
+            play_dir = -play_dir;
+            play_tx = play_x + (PLAY_DW / 2) + play_dir * span;
+        }
+        if (play_tx < 12) {
+            play_tx = 12;
+        }
+        if (play_tx > CYD_W - 12) {
+            play_tx = CYD_W - 12;
+        }
+        play_ty = PLAY_FLOOR + CYD_WALK_H * CYD_WALK_SCALE - 8;
+    }
+}
+
+static void play_clamp(void)
+{
+    if (play_x < 2) {
+        play_x = 2;
+        play_dir = 1;
+    }
+    if (play_x > CYD_W - PLAY_DW - 2) {
+        play_x = CYD_W - PLAY_DW - 2;
+        play_dir = -1;
+    }
+}
+
+static void play_step(void)
+{
+    if (!play_inited) {
+        play_x = 16;
+        play_dir = 1;
+        play_inited = 1;
+        play_begin(0, 0);
+        return;
+    }
+    if (play_act == 1) {
+        play_pose = CYD_WALK_SIT;
+        play_y = PLAY_FLOOR + 2 + ((play_left & 4) ? 1 : 0);
+        if (--play_left <= 0) {
+            play_begin(0, 1);
+        }
+        return;
+    }
+    if (play_act == 0) {
+        play_x += play_dir * 4;
+        play_pose = (play_pose == CYD_WALK_B) ? CYD_WALK_A : CYD_WALK_B;
+        play_y = PLAY_FLOOR + (play_pose == CYD_WALK_B ? 1 : 0);
+        play_clamp();
+        if (--play_left <= 0) {
+            int r = (int)(esp_random() % 5);
+            if (r == 0) {
+                play_begin(1, 0);
+            } else if (r == 1) {
+                play_begin(2, 0);
+            } else if (r == 2) {
+                play_begin(3, 0);
+            } else {
+                play_begin(0, 1);
+            }
+        }
+        return;
+    }
+    {
+        int center = play_x + PLAY_DW / 2;
+        int dx = play_tx - center;
+        if (play_bat > 0) {
+            play_pose = CYD_WALK_POUNCE;
+            play_y = PLAY_FLOOR - 2;
+            if (--play_bat == 0) {
+                play_tx += play_dir * 28;
+                if (play_tx < 10) {
+                    play_tx = 10;
+                }
+                if (play_tx > CYD_W - 10) {
+                    play_tx = CYD_W - 10;
+                }
+                play_ty = PLAY_FLOOR + CYD_WALK_H * CYD_WALK_SCALE - 6;
+            }
+        } else if (dx > 16 || dx < -16) {
+            play_dir = dx > 0 ? 1 : -1;
+            play_x += play_dir * 7;
+            play_clamp();
+            play_pose = (play_pose == CYD_WALK_B) ? CYD_WALK_A : CYD_WALK_B;
+            play_y = PLAY_FLOOR;
+        } else {
+            play_pose = CYD_WALK_POUNCE;
+            play_dir = dx >= 0 ? 1 : -1;
+            play_bat = 3;
+            play_y = PLAY_FLOOR + 1;
+        }
+        if (--play_left <= 0) {
+            play_toy = 0;
+            play_begin(1, 0);
+        }
+    }
+}
+
+static void play_publish(cyd_scene_t *scene)
+{
+    scene->play_x = play_x;
+    scene->play_y = play_y;
+    scene->play_pose = play_pose;
+    scene->play_dir = play_dir;
+    scene->play_toy = play_toy;
+    scene->play_tx = play_tx;
+    scene->play_ty = play_ty;
+}
+
 static void display_task(void *arg)
 {
     (void)arg;
@@ -1030,6 +1193,7 @@ static void display_task(void *arg)
     int behavior = 0, beh_start = 0, beh_len = 24;
     int cat_force = -1, cat_hold = 0, cat_phase0 = 0, cat_salt = 0, prev_alerts = 0;
     int was_down = 0;
+    int wake_hold = 0;
     int alerts_view = 0, long_done = 0, alert_count_last = 0, banner_last = 0;
     int64_t down_since = 0;
     int64_t alerts_since = 0;
@@ -1070,19 +1234,30 @@ static void display_task(void *arg)
         int tx = -1, ty = -1;
         int down = touch_xy(&tx, &ty) || touch_down();
         int tap = down && !was_down;
-        if (tap) {
-            /* Any touch: the cat purrs for a few frames, including a wake. */
-            cat_force = CYD_CAT_PURR;
-            cat_hold = 10 + (int)(esp_random() % 8);
-            cat_phase0 = frame;
-            cat_salt = (int)(esp_random() & 15);
+        /* The press that leaves the saver or a dark panel only wakes.
+         * Buttons, the alert list and the long-press clear wait for a new tap. */
+        int resting = !s_screen_on || last_mode == CYD_UI_SAVER || last_mode == CYD_UI_SLEEP;
+        if (!down) {
+            wake_hold = 0;
+        } else if (tap && resting) {
+            wake_hold = 1;
         }
-        if (down) {
-            int on_saver = last_mode == CYD_UI_SAVER;
+        if (down && wake_hold) {
+            idle_since = esp_timer_get_time();
+            if (!s_screen_on) {
+                set_screen(1);
+            }
+        } else if (down) {
             int woke = !s_screen_on || (last_mode != CYD_UI_HOME && last_mode != CYD_UI_ALERTS);
             idle_since = esp_timer_get_time();
             if (!s_screen_on) {
                 set_screen(1);
+            }
+            if (tap) {
+                cat_force = CYD_CAT_PURR;
+                cat_hold = 10 + (int)(esp_random() % 8);
+                cat_phase0 = frame;
+                cat_salt = (int)(esp_random() & 15);
             }
             if (!was_down) down_since = esp_timer_get_time();
             int has_alerts = alert_count_last > 0;
@@ -1101,7 +1276,7 @@ static void display_task(void *arg)
                 continue;
             }
             /* big target: whole top strip (left of the Porta button) or the banner */
-            if (!was_down && has_alerts && (last_mode == CYD_UI_HOME || on_saver) && ty >= 0 &&
+            if (!was_down && has_alerts && last_mode == CYD_UI_HOME && ty >= 0 &&
                 ((ty < 70 && tx < CYD_CAMBTN_X - 6) || (banner_last && ty >= 190))) {
                 alerts_view = 1;
                 alerts_since = esp_timer_get_time();
@@ -1120,7 +1295,7 @@ static void display_task(void *arg)
         if (frame - beh_start >= beh_len) {
             int prev = behavior;
             /* Idle most of the time. Stretch and a look-around are occasional.
-             * Sleep is not in this pool: it belongs to the night screensaver. */
+             * At night the panel sleeps instead of showing this cat. */
             static const int pool[5] = {
                 CYD_CAT_IDLE, CYD_CAT_IDLE, CYD_CAT_IDLE, CYD_CAT_STRETCH, CYD_CAT_ALERT
             };
@@ -1191,23 +1366,20 @@ static void display_task(void *arg)
             snprintf(scene.ip, sizeof scene.ip, "%s", ip);
         }
 
+        scene.drift = (int)((frame / 16) % 7) - 3;
         if (!wifi_manager_is_connected()) {
             scene.mode = CYD_UI_PORTAL;
             if (!s_screen_on) {
                 set_screen(1);
             }
-        } else if (idle_ms >= SLEEP_MS) {
+        } else if (idle_ms >= SAVER_MS && cyd_is_night(scene.time_valid, hour24,
+                                                       cyd_cfg()->day_start, cyd_cfg()->day_end)) {
+            /* 21:00–06:00 by default: backlight off and the panel in sleep. */
             scene.mode = CYD_UI_SLEEP;
             set_screen(0);
         } else if (idle_ms >= SAVER_MS) {
             scene.mode = CYD_UI_SAVER;
             scene.blink = 1;
-            if (!scene.has_temp) {
-                scene.temp_c = 26;
-            }
-            if (!scene.has_humidity) {
-                scene.humidity = 62;
-            }
             if (!s_screen_on) {
                 set_screen(1);
             }
@@ -1231,10 +1403,10 @@ static void display_task(void *arg)
             if (--cat_hold <= 0) {
                 cat_force = -1;
             }
-        } else if (scene.mode == CYD_UI_SAVER && (hour24 >= 21 || (hour24 >= 0 && hour24 < 6))) {
-            scene.behavior = CYD_CAT_SLEEP;
-            scene.phase = frame;
-            scene.cat_salt = 0;
+        }
+        if (scene.mode == CYD_UI_SAVER && scene.cat_on) {
+            play_step();
+            play_publish(&scene);
         }
 
         if (scene.mode == CYD_UI_SLEEP) {

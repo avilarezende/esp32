@@ -1,5 +1,9 @@
 #include "cyd_ble.h"
 
+#include "sdkconfig.h"
+
+#if CONFIG_BT_NIMBLE_ENABLED
+
 #include <stdio.h>
 #include <string.h>
 
@@ -302,3 +306,24 @@ void cyd_ble_json(char *buf, size_t n)
         buf[n - 1] = 0;
     }
 }
+
+#else /* !CONFIG_BT_NIMBLE_ENABLED */
+
+#include <stdio.h>
+
+esp_err_t cyd_ble_start(void)
+{
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+void cyd_ble_json(char *buf, size_t n)
+{
+    if (!n) {
+        return;
+    }
+    snprintf(buf, n,
+             "{\"ok\":true,\"scanning\":false,\"adv\":0,\"heap\":0,\"heap_min\":0,"
+             "\"spock\":{\"mac\":\"00:33:7A:DF:F3:E1\",\"seen\":false},\"count\":0,\"devices\":[]}");
+}
+
+#endif

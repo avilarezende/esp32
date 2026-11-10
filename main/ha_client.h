@@ -23,8 +23,10 @@ typedef struct {
     int ready;        /* 1 = last fetch ok, 0 = never, -1 = failed */
     int has_temp;
     int has_humidity;
+    int has_cond;
     int temp_c;
     int humidity;
+    char cond[16];       /* short pt-BR phrase from the first weather.* entity */
     int lights_on;
     int lights_total;
     int device_count;

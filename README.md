@@ -38,9 +38,10 @@ flash.bat COM3
 - Até 5 linhas, no formato `entidade` ou `entidade=Rótulo`. Padrão de fábrica:
   `switch.carros_switch_1=Garagem 1`, `switch.carros_switch_2=Garagem 2`,
   `switch.casa_aracaju_piscina=Piscina`, `switch.casa_ewelink_poco=Poco`.
-- Relógio Montserrat com antialiasing, gato calico em sprites RLE (respira,
-  pisca, rabo, orelha, alonga, dorme à noite no protetor, alerta no HA,
-  ronrona no toque) e splash ditherizado.
+- Relógio Montserrat com antialiasing, gato calico em sprites RLE na
+  observação (respira, pisca, rabo, orelha, alonga, alerta no HA, ronrona
+  no toque) e, no descanso diurno, um gato menor que anda e brinca. Splash
+  ditherizado.
 - Tema escuro único: barra de status (hora ou título, selo, estado do HA,
   ícone de internet), cartões arredondados para clima, dispositivos e alertas,
   botão **Porta** no mesmo canto. Faixas que não mudaram não são reenviadas
@@ -133,6 +134,12 @@ Servidor em [`main/http_server.c`](main/http_server.c), porta **80**:
   entra na próxima passagem de `display_task`; BGR e o controlador só depois
   de reiniciar. `GET /config` também devolve `panel_on` e `panel_id`.
 - `POST /alert`, `GET /alerts` — alertas do HA (POST exige a chave)
+- `GET /ble` — varredura BLE passiva (NimBLE; anúncio passivo, sem conectar). JSON com
+  `scanning`, `adv`, `heap`, `heap_min`, `spock` (`mac`, `rssi`, `age_s`,
+  `name` quando a tag `00:33:7A:DF:F3:E1` foi vista; senão `seen: false`)
+  e `devices` (até 12 anúncios recentes). O scanner continua com a tela
+  no descanso ou apagada. O pacote que o Home Assistant consome está em
+  [docs/homeassistant/cyd_ble.yaml](docs/homeassistant/cyd_ble.yaml).
 - `GET /touch` — última leitura do XPT2046, mais `uptime_s`, `disp_age_ms`
   (ms desde a última volta de `display_task`, ou `-1`), `reset`
   (`esp_reset_reason`) e `heap` / `heap_min`
@@ -171,8 +178,10 @@ No celular ela cresce.
 - **Casa** lista as entidades configuradas na tela.
 - **Ajustes** mostra a rede e a seção **Tela do CYD** (dispositivos, câmeras,
   brilho, cores, gato, relógio, alertas) e o envio de `esp32-ota.bin`.
-- Depois de **30 s** sem toque, o protetor cobre a página. `prefers-reduced-motion`
-  desliga a animação do gato no navegador.
+- Depois do tempo de `saver_s` sem toque (padrão de fábrica **120 s**; a
+  página usa esse valor quando `/config` responde), o protetor cobre a
+  página. `prefers-reduced-motion` desliga a animação do gato no navegador.
+  A página do celular não apaga a backlight: isso é só o painel.
 
 No primeiro uso o onboarding pergunta o hub. Endereço de exemplo, porta 80:
 `http://192.168.0.10`. O token longo vai no campo de senha.
@@ -184,7 +193,7 @@ de 1,94 MB. Quem já gravou uma imagem antiga precisa de **um último flash por
 cabo** ([INSTALACAO.md](docs/INSTALACAO.md)); as próximas trocas são `POST /ota`.
 
 ```bash
-idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd" build
+idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd;sdkconfig.ble" build
 idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -p /dev/ttyUSB0 flash monitor
 ```
 

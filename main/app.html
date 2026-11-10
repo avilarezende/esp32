@@ -322,6 +322,9 @@ nav button:active{background:#243044}
         <label><input type="checkbox" id="c-inv"> Inverter cores</label>
         <label><input type="checkbox" id="c-bgr"> Ordem BGR (reinicia para aplicar)</label>
         <label for="c-saver_s">Descanso de tela após (s)</label><input id="c-saver_s" type="number" min="10" max="3600">
+        <label for="c-day_start">Relógio e gato a partir desta hora</label><input id="c-day_start" type="number" min="0" max="23">
+        <label for="c-day_end">Tela apaga a partir desta hora</label><input id="c-day_end" type="number" min="0" max="23">
+        <p class="hint">Padrão: 120 s, das 6 h às 21 h (America/Fortaleza). Nesse intervalo o painel mostra a hora, o clima e o gato. Fora dele a tela desliga. Sem hora válida o descanso fica sem relógio.</p>
         <label><input type="checkbox" id="c-cat"> Gatinho animado</label>
         <label><input type="checkbox" id="c-clk24"> Relógio 24 h</label>
         <label><input type="checkbox" id="c-alerts"> Alertas do HA (faixa e contador)</label>
@@ -596,13 +599,15 @@ $('#saver').onclick = function(){ hideSaver(); };
     bump();
   }, {passive:true});
 });
-var CFGK=['ents','pets','cam_bell','cam_quick','btn_label','btn_icon','bell_secs','cam_ms','bright','inv','bgr','panel','saver_s','cat','clk24','alerts','net_url'];
+var CFGK=['ents','pets','cam_bell','cam_quick','btn_label','btn_icon','bell_secs','cam_ms','bright','inv','bgr','panel','saver_s','day_start','day_end','cat','clk24','alerts','net_url'];
 var PANELN={0:'automático',1:'ILI9341',2:'ST7789',3:'ILI9342'};
 var loadedPanel=null;
 async function loadCfg(){
   try{ var c = await (await fetch('/config')).json();
     CFGK.forEach(function(k){ var el=$('#c-'+k); if(!el) return; if(el.type==='checkbox') el.checked=!!c[k]; else el.value=c[k]; });
     loadedPanel=c.panel;
+    if (c.saver_s) IDLE_MS = Math.max(10, Number(c.saver_s)) * 1000;
+    bump();
     var hint=$('#c-panel-hint');
     if(hint){
       var on=c.panel_on?(PANELN[c.panel_on]||'?'):'ainda não lido';

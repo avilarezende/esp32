@@ -208,49 +208,67 @@ int main(int argc, char **argv)
     s.net_state = 0;
     save(dir, "portal", &s);
 
-    /* Cat poses on the saver, plus a short strip for the animated preview. */
+    /* Day saver: clock, weather phrase, calico walker. */
     base(&s);
     s.mode = CYD_UI_SAVER;
-    s.behavior = CYD_CAT_IDLE;
-    s.phase = 4;
+    s.has_cond = 1;
+    snprintf(s.cond, sizeof s.cond, "nublado");
+    s.play_x = 36;
+    s.play_y = 168;
+    s.play_pose = CYD_WALK_A;
+    s.play_dir = 1;
+    s.play_toy = 1;
+    s.play_tx = 160;
+    s.play_ty = 204;
     save(dir, "cat-idle", &s);
-    s.phase = 25;
+    s.play_pose = CYD_WALK_B;
+    s.play_x = 120;
+    s.play_toy = 0;
     save(dir, "cat-blink", &s);
-    s.behavior = CYD_CAT_STRETCH;
-    s.phase = 8;
+    s.play_pose = CYD_WALK_SIT;
+    s.play_x = 200;
     save(dir, "cat-stretch", &s);
-    s.behavior = CYD_CAT_SLEEP;
-    s.phase = 4;
-    s.hour = 23;
-    save(dir, "cat-sleep", &s);
-    s.behavior = CYD_CAT_ALERT;
-    s.phase = 0;
-    s.hour = 9;
-    save(dir, "cat-alert", &s);
-    s.behavior = CYD_CAT_PURR;
-    s.phase = 2;
+    s.play_pose = CYD_WALK_POUNCE;
+    s.play_x = 70;
+    s.play_dir = 1;
+    s.play_toy = 2;
+    s.play_tx = 210;
+    s.play_ty = 204;
     save(dir, "cat-purr", &s);
+    s.time_valid = 0;
+    s.play_toy = 0;
+    s.play_pose = CYD_WALK_A;
+    s.play_x = 150;
+    save(dir, "cat-alert", &s);
+    s.time_valid = 1;
+    s.hour = 23;
+    s.mode = CYD_UI_SLEEP;
+    save(dir, "cat-sleep", &s);
 
     {
-        static const int seq[][2] = {
-            {CYD_CAT_IDLE, 0}, {CYD_CAT_IDLE, 2}, {CYD_CAT_IDLE, 4},
-            {CYD_CAT_IDLE, 6}, {CYD_CAT_IDLE, 8}, {CYD_CAT_IDLE, 10},
-            {CYD_CAT_IDLE, 24}, {CYD_CAT_IDLE, 25}, {CYD_CAT_IDLE, 26},
-            {CYD_CAT_IDLE, 12}, {CYD_CAT_STRETCH, 2}, {CYD_CAT_STRETCH, 4},
-            {CYD_CAT_STRETCH, 6}, {CYD_CAT_STRETCH, 8}, {CYD_CAT_STRETCH, 12},
-            {CYD_CAT_SLEEP, 0}, {CYD_CAT_SLEEP, 4}, {CYD_CAT_SLEEP, 8},
-            {CYD_CAT_ALERT, 0}, {CYD_CAT_ALERT, 6},
-            {CYD_CAT_PURR, 0}, {CYD_CAT_PURR, 2}, {CYD_CAT_PURR, 4},
+        static const int seq[][3] = {
+            {CYD_WALK_A, 20, 1}, {CYD_WALK_B, 52, 1}, {CYD_WALK_A, 84, 1},
+            {CYD_WALK_B, 116, 1}, {CYD_WALK_A, 148, 1}, {CYD_WALK_B, 180, 1},
+            {CYD_WALK_SIT, 180, 1}, {CYD_WALK_SIT, 180, 1},
+            {CYD_WALK_A, 200, -1}, {CYD_WALK_B, 168, -1}, {CYD_WALK_A, 136, -1},
+            {CYD_WALK_POUNCE, 100, 1}, {CYD_WALK_POUNCE, 130, 1},
+            {CYD_WALK_A, 160, 1}, {CYD_WALK_B, 192, 1},
         };
         int i;
         for (i = 0; i < (int)(sizeof seq / sizeof seq[0]); i++) {
             char name[32];
             base(&s);
             s.mode = CYD_UI_SAVER;
-            s.behavior = seq[i][0];
-            s.phase = seq[i][1];
-            if (s.behavior == CYD_CAT_SLEEP) {
-                s.hour = 23;
+            s.has_cond = 1;
+            snprintf(s.cond, sizeof s.cond, "nublado");
+            s.play_pose = seq[i][0];
+            s.play_x = seq[i][1];
+            s.play_y = 168;
+            s.play_dir = seq[i][2];
+            if (s.play_pose == CYD_WALK_POUNCE) {
+                s.play_toy = 1;
+                s.play_tx = s.play_x + 70;
+                s.play_ty = 204;
             }
             snprintf(name, sizeof name, "cat-anim-%02d", i);
             save(dir, name, &s);

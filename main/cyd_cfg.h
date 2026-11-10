@@ -14,7 +14,9 @@ typedef struct {
     uint8_t bgr;         /* BGR element order (reboot) */
     uint8_t panel;       /* 0 auto, 1 ILI9341, 2 ST7789, 3 ILI9342 (reboot) */
     uint8_t bright;      /* backlight 5..100 % */
-    uint16_t saver_s;    /* idle seconds before the rest screen */
+    uint16_t saver_s;    /* idle seconds before the rest screen (default 120) */
+    uint8_t day_start;   /* inclusive hour: saver with clock (default 6) */
+    uint8_t day_end;     /* exclusive hour: screen off from here (default 21) */
     uint8_t cat;         /* cat animation */
     uint8_t clk24;       /* 24 h clock */
     uint8_t alerts;      /* show alerts banner/badge */

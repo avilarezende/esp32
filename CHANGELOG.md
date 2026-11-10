@@ -5,6 +5,28 @@
 Firmware do Cheap Yellow Display 2.8" (ESP-IDF 5.3.2), em cima do portal Wi-Fi
 e da observação do Home Assistant. Testado na placa pelo autor da série.
 
+### Descanso e BLE
+
+- Scanner BLE passivo (NimBLE, janela 30 ms a cada 320 ms, sem conectar).
+  O papel central continua ligado porque o NimBLE deste ESP-IDF não compila
+  só como observador; o scan em si é `passive`.
+  `GET /ble` entrega a tag do Spock (`00:33:7A:DF:F3:E1`) e até 12 anúncios.
+  A varredura segue com a tela no descanso ou apagada. `sdkconfig.ble` entra
+  só no build da CYD (o QEMU não liga o rádio).
+- Pools do NimBLE menores que o padrão (sem papel de central/periférico, sem
+  security manager, ACL e mbufs só para anúncio). A meta é subir o heap
+  mínimo, que tinha ficado em cerca de 4 KB com o scanner anterior.
+- Sem toque por `saver_s` (padrão de fábrica **120 s**, NVS `c_saver`):
+  entre `day_start` e `day_end` (padrão **6** e **21**) o descanso mostra
+  hora grande, clima e um gato cálico de 32×22 que anda, senta e brinca.
+  Fora dessa janela a backlight apaga e o painel entra em sleep. O primeiro
+  toque só acorda.
+- Hora por SNTP em **America/Fortaleza** (UTC−3, sem horário de verão).
+  Sem sincronismo, o descanso não desenha relógio e não apaga a tela.
+- Clima pelo `POST /api/template` que já existia: primeiro `weather.*`
+  (temperatura, umidade e condição) e, se não houver, sensores de
+  temperatura/umidade. Sem dados, o cartão diz `clima indisponivel`.
+
 ### Home Assistant
 
 - O token longo cabe em **319** caracteres (antes era cortado em 63).
@@ -63,8 +85,9 @@ e da observação do Home Assistant. Testado na placa pelo autor da série.
 - Relógio com Montserrat semibold e antialiasing (24 h por padrão).
 - Gato calico redesenhado em sprites de paleta com RLE (borda já misturada
   ao fundo escuro, sem framebuffer extra). Respira, pisca, balança o rabo,
-  mexe a orelha, alonga e boceja, dorme no protetor entre 21 h e 6 h, olha
-  para cima quando chega um alerta do HA e ronrona no toque. O tempo de
+  mexe a orelha, alonga e boceja, olha
+  para cima quando chega um alerta do HA e ronrona no toque. À noite o
+  painel apaga em vez de mostrar o gato dormindo. O tempo de
   cada pose é aleatório. O splash ditherizado da inicialização continua.
 - Inversão de cor **desligada** por padrão. A ordem BGR continua disponível e
   só passa a valer depois de reiniciar. Inversão e brilho pedidos por

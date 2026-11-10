@@ -7,6 +7,7 @@
 
 #include "cyd_cfg.h"
 #include "cyd_scene.h"
+#include "cyd_weather.h"
 #include "unity.h"
 
 static cyd_cfg_t s_cfg = {
@@ -192,29 +193,95 @@ static void test_sleep_and_bars_and_stable(void)
     TEST_ASSERT_EQUAL_INT(0, memcmp(again, frame, sizeof frame));
 }
 
+static int count_eq_band(int y0, int y1, uint16_t color)
+{
+    int n = 0;
+    int y, x;
+    if (y1 > CYD_H) {
+        y1 = CYD_H;
+    }
+    for (y = y0; y < y1; y++) {
+        for (x = 0; x < CYD_W; x++) {
+            if (px(x, y) == color) {
+                n++;
+            }
+        }
+    }
+    return n;
+}
+
 static void test_cat_poses_keep_the_calico(void)
 {
     cyd_scene_t s;
     static uint16_t idle[CYD_W * CYD_H];
-    int poses[4] = {CYD_CAT_SLEEP, CYD_CAT_STRETCH, CYD_CAT_PURR, CYD_CAT_ALERT};
-    int phases[4] = {4, 8, 2, 0};
+    int poses[3] = {CYD_WALK_B, CYD_WALK_SIT, CYD_WALK_POUNCE};
     int i;
+    uint16_t orange = rgb565(239, 138, 54);
 
     base_scene(&s);
     s.mode = CYD_UI_SAVER;
-    s.behavior = CYD_CAT_IDLE;
-    s.phase = 4;
+    s.play_x = 40;
+    s.play_y = 168;
+    s.play_pose = CYD_WALK_A;
+    s.play_dir = 1;
     paint(&s);
     TEST_ASSERT_TRUE(count_eq(cream) > 80);
+    TEST_ASSERT_TRUE(count_eq(orange) > 10);
     memcpy(idle, frame, sizeof idle);
 
-    for (i = 0; i < 4; i++) {
-        s.behavior = poses[i];
-        s.phase = phases[i];
+    for (i = 0; i < 3; i++) {
+        s.play_pose = poses[i];
+        s.play_x = 80 + i * 30;
         paint(&s);
         TEST_ASSERT_TRUE(count_eq(cream) > 40);
         TEST_ASSERT_TRUE(memcmp(idle, frame, sizeof idle) != 0);
     }
+
+    s.play_pose = CYD_WALK_A;
+    s.play_x = 40;
+    s.play_dir = -1;
+    paint(&s);
+    TEST_ASSERT_TRUE(memcmp(idle, frame, sizeof idle) != 0);
+
+    s.play_dir = 1;
+    s.play_toy = 1;
+    s.play_tx = 200;
+    s.play_ty = 200;
+    paint(&s);
+    TEST_ASSERT_TRUE(count_eq(orange) > 30);
+}
+
+static void test_saver_clock_and_night_window(void)
+{
+    cyd_scene_t s;
+    uint16_t white = rgb565(244, 247, 251);
+    char phrase[16];
+
+    base_scene(&s);
+    s.mode = CYD_UI_SAVER;
+    s.has_cond = 1;
+    memcpy(s.cond, "nublado", 8);
+    paint(&s);
+    TEST_ASSERT_TRUE(count_eq_band(30, 82, white) > 20);
+
+    s.time_valid = 0;
+    paint(&s);
+    TEST_ASSERT_EQUAL_INT(0, count_eq_band(30, 82, white));
+    TEST_ASSERT_EQUAL_UINT16(card, px(24, 100));
+
+    TEST_ASSERT_EQUAL_INT(0, cyd_is_night(0, 23, 6, 21));
+    TEST_ASSERT_EQUAL_INT(0, cyd_is_night(1, 6, 6, 21));
+    TEST_ASSERT_EQUAL_INT(0, cyd_is_night(1, 20, 6, 21));
+    TEST_ASSERT_EQUAL_INT(1, cyd_is_night(1, 21, 6, 21));
+    TEST_ASSERT_EQUAL_INT(1, cyd_is_night(1, 2, 6, 21));
+    TEST_ASSERT_EQUAL_INT(0, cyd_is_night(1, 12, 22, 6));
+
+    TEST_ASSERT_EQUAL_INT(1, cyd_weather_phrase("partlycloudy", phrase, sizeof phrase));
+    TEST_ASSERT_EQUAL_STRING("parcial", phrase);
+    TEST_ASSERT_EQUAL_INT(1, cyd_weather_phrase("clear-night", phrase, sizeof phrase));
+    TEST_ASSERT_EQUAL_STRING("noite limpa", phrase);
+    TEST_ASSERT_EQUAL_INT(0, cyd_weather_phrase("unknown", phrase, sizeof phrase));
+    TEST_ASSERT_EQUAL_INT(0, cyd_weather_phrase("", phrase, sizeof phrase));
 }
 
 static void test_globe_spins_and_stops(void)
@@ -282,6 +349,7 @@ int main(void)
     RUN_TEST(test_home_rows_card_and_banner);
     RUN_TEST(test_sleep_and_bars_and_stable);
     RUN_TEST(test_cat_poses_keep_the_calico);
+    RUN_TEST(test_saver_clock_and_night_window);
     RUN_TEST(test_empty_home_keeps_the_cat);
     RUN_TEST(test_globe_spins_and_stops);
     return UNITY_END();

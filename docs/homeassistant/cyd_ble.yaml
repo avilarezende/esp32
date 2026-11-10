@@ -1,0 +1,97 @@
+# CYD 1 (192.168.31.227) e CYD 2 (192.168.31.93) como rastreadores BLE passivos.
+# Os painéis rodam firmware próprio (ESP-IDF), não ESPHome; o scanner é GET /ble
+# (varredura passiva 320/30 ms, igual ao StickS3). Bermuda segue com o dongle
+# hci0 e o StickS3. Estes sensores entram na presença local do Spock.
+# Backup: /config/backups_alfred/cyd-ble-20261109-2340/
+
+rest:
+  - resource: http://192.168.31.227/ble
+    scan_interval: 15
+    timeout: 8
+    sensor:
+      - name: CYD Spock RSSI
+        unique_id: cyd_spock_rssi
+        unit_of_measurement: dBm
+        device_class: signal_strength
+        state_class: measurement
+        icon: mdi:bluetooth
+        value_template: >-
+          {% if value_json is mapping and value_json.spock is mapping
+             and value_json.spock.age_s is defined and value_json.spock.age_s < 90 %}
+            {{ value_json.spock.rssi }}
+          {% else %}
+            unknown
+          {% endif %}
+      - name: CYD heap livre
+        unique_id: cyd_heap_livre
+        unit_of_measurement: B
+        icon: mdi:memory
+        value_template: "{{ value_json.heap if value_json is mapping and value_json.heap is defined else none }}"
+      - name: CYD heap mínimo
+        unique_id: cyd_heap_min
+        unit_of_measurement: B
+        icon: mdi:memory
+        value_template: "{{ value_json.heap_min if value_json is mapping and value_json.heap_min is defined else none }}"
+    binary_sensor:
+      - name: CYD Spock visível
+        unique_id: cyd_spock_visivel
+        device_class: presence
+        icon: mdi:dog
+        value_template: >-
+          {{ value_json is mapping and value_json.spock is mapping
+             and value_json.spock.age_s is defined and value_json.spock.age_s < 90 }}
+
+  - resource: http://192.168.31.93/ble
+    scan_interval: 15
+    timeout: 8
+    sensor:
+      - name: CYD-2 Spock RSSI
+        unique_id: cyd2_spock_rssi
+        unit_of_measurement: dBm
+        device_class: signal_strength
+        state_class: measurement
+        icon: mdi:bluetooth
+        value_template: >-
+          {% if value_json is mapping and value_json.spock is mapping
+             and value_json.spock.age_s is defined and value_json.spock.age_s < 90 %}
+            {{ value_json.spock.rssi }}
+          {% else %}
+            unknown
+          {% endif %}
+      - name: CYD-2 heap livre
+        unique_id: cyd2_heap_livre
+        unit_of_measurement: B
+        icon: mdi:memory
+        value_template: "{{ value_json.heap if value_json is mapping and value_json.heap is defined else none }}"
+      - name: CYD-2 heap mínimo
+        unique_id: cyd2_heap_min
+        unit_of_measurement: B
+        icon: mdi:memory
+        value_template: "{{ value_json.heap_min if value_json is mapping and value_json.heap_min is defined else none }}"
+    binary_sensor:
+      - name: CYD-2 Spock visível
+        unique_id: cyd2_spock_visivel
+        device_class: presence
+        icon: mdi:dog
+        value_template: >-
+          {{ value_json is mapping and value_json.spock is mapping
+             and value_json.spock.age_s is defined and value_json.spock.age_s < 90 }}
+
+template:
+  - binary_sensor:
+      - name: Spock tag no alcance local
+        unique_id: spock_tag_local
+        device_class: presence
+        icon: mdi:bluetooth
+        state: >-
+          {{ is_state('device_tracker.tag_de_rodrigo_bermuda_tracker', 'home')
+             or is_state('device_tracker.spock_tag', 'home')
+             or is_state('binary_sensor.cyd_spock_visivel', 'on')
+             or is_state('binary_sensor.cyd_2_spock_visivel', 'on') }}
+        attributes:
+          bermuda: "{{ states('device_tracker.tag_de_rodrigo_bermuda_tracker') }}"
+          dongle: "{{ states('device_tracker.spock_tag') }}"
+          cyd: "{{ states('binary_sensor.cyd_spock_visivel') }}"
+          cyd_rssi: "{{ states('sensor.cyd_spock_rssi') }}"
+          cyd2: "{{ states('binary_sensor.cyd_2_spock_visivel') }}"
+          cyd2_rssi: "{{ states('sensor.cyd_2_spock_rssi') }}"

@@ -10,7 +10,8 @@ página web). Veja o `README.md` para o fluxo completo, build e emulação.
 
 Comandos essenciais (após `. "$HOME/esp/esp-idf/export.sh"`):
 
-- Build hardware: `idf.py build`
+- Build da CYD (painel + BLE): `idf.py -B build_cyd -DSDKCONFIG=build_cyd/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.cyd;sdkconfig.ble" build`
+- Build genérico (sem o painel CYD): `idf.py build`
 - Build QEMU (rádio desligado, portal via Ethernet emulada):
   `idf.py -B build_qemu -DSDKCONFIG=build_qemu/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.qemu" build`
 - Emular: `idf.py -B build_qemu qemu` (portal em `openeth`; use `hostfwd=tcp::8080-:80` para acessar via `http://127.0.0.1:8080/`).
