@@ -12,6 +12,7 @@ idf_component_register(SRCS "main.c"
                             "cyd_panel.c"
                             "cyd_bmp.c"
                             "cyd_net.c"
+                            "cyd_ble.c"
                        INCLUDE_DIRS "."
                        EMBED_TXTFILES "app.html"
                        REQUIRES spi_flash
@@ -30,4 +31,5 @@ idf_component_register(SRCS "main.c"
                                 esp_event
                                 nvs_flash
                                 esp_eth
-                                wifi_form)
+                                wifi_form
+                                bt)

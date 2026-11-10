@@ -4,6 +4,7 @@
 #include "ha_client.h"
 #include "cyd_cfg.h"
 #include "cyd_panel.h"
+#include "cyd_ble.h"
 #include "esp_ota_ops.h"
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
@@ -307,6 +308,7 @@ static esp_err_t alert_post_handler(httpd_req_t *req)
 static void alerts_json_fn(char *b, size_t n) { cyd_alerts_json(b, n); }
 static void touch_json_fn(char *b, size_t n) { cyd_touch_json(b, n); }
 static esp_err_t touch_get_handler(httpd_req_t *req) { return send_json(req, touch_json_fn, 256); }
+static esp_err_t ble_get_handler(httpd_req_t *req) { return send_json(req, cyd_ble_json, 1600); }
 static esp_err_t alerts_get_handler(httpd_req_t *req) { return send_json(req, alerts_json_fn, 1200); }
 
 /* ---- Settings (same LAN trust as /hub) ---- */
@@ -622,6 +624,7 @@ httpd_handle_t http_config_server_start(void)
         { .uri = "/alert",        .method = HTTP_POST, .handler = alert_post_handler },
         { .uri = "/alerts",       .method = HTTP_GET,  .handler = alerts_get_handler },
         { .uri = "/touch",        .method = HTTP_GET,  .handler = touch_get_handler },
+        { .uri = "/ble",          .method = HTTP_GET,  .handler = ble_get_handler },
         { .uri = "/config",       .method = HTTP_GET,  .handler = config_get_handler },
         { .uri = "/config",       .method = HTTP_POST, .handler = config_post_handler },
         { .uri = "/ota",          .method = HTTP_POST, .handler = ota_post_handler },
